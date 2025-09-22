@@ -82,11 +82,11 @@ const CandlestickShape = (props: any): React.ReactElement => {
 
 const MemoizedCandlestick = React.memo(CandlestickShape, (prev, next) => {
   // Only re-render if candle data changed
-  return prev.payload.time === next.payload.time;
+  return prev.payload.startInSeconds == next.payload.startInSeconds;
 });  
 
 // Custom tooltip for candlestick data
-const CandlestickTooltip = ({ active, payload, label }: any) => {
+const CandlestickTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length && payload[0].payload) {
       const data = payload[0].payload as Candle;
     const change = data.close - data.open;
@@ -96,7 +96,7 @@ const CandlestickTooltip = ({ active, payload, label }: any) => {
     return (
       <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
         <p className="font-medium text-gray-900 mb-2">
-          {data.symbol} - {new Date(data.time).toLocaleString()}
+          {data.symbol} - {data.start.toLocaleString()}
         </p>
         <div className="space-y-1 text-sm">
           <div className="flex justify-between gap-4">
@@ -139,17 +139,7 @@ export const TokenChart: React.FC<TokenChartProps> = ({
   className,
 }) => {
   const candles = useCandleStore((s) => s.candles[symbol]) || [];
-  
-  // Prepare data for the chart
-  const chartData = candles.map((candle, index) => ({
-    ...candle,
-    index,
-    // Add synthetic fields for easier charting
-    bodyTop: Math.max(candle.open, candle.close),
-    bodyBottom: Math.min(candle.open, candle.close),
-    isBullish: candle.close >= candle.open
-  }));
-  
+    
   // Calculate Y-axis domain
   const allPrices = candles.flatMap(c => [c.high, c.low]);
   const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : 0;
@@ -177,20 +167,18 @@ export const TokenChart: React.FC<TokenChartProps> = ({
       
       <ResponsiveContainer width="100%" height={300}>
         <ComposedChart
-          data={chartData}
+          data={candles}
           margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
         >
           <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
           <XAxis
-            dataKey="time"
-            tickFormatter={(time: string) => {
-              const date = new Date(time);
-              return date.toLocaleTimeString([], { 
-                hour: '2-digit', 
-                minute: '2-digit',
-                hour12: false 
-              });
-            }}
+            dataKey="startInSeconds"
+            type="number"
+            scale="time"
+            domain={['dataMin', 'dataMax']}
+            tickFormatter={(ms: number) =>
+              new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+            }
             tick={{ fontSize: 11, fill: '#6b7280' }}
             axisLine={{ stroke: '#d1d5db' }}
             tickLine={{ stroke: '#d1d5db' }}

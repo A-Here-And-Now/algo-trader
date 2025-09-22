@@ -8,7 +8,7 @@ import { PriceTicker } from "./components/PriceTicker";
 import { TokenChart } from "./components/TokenChart";
 import { usePriceStore, useCandleStore } from "./services/store";
 import Price from "./models/Price";
-import Candle from "./models/Candle";
+import { Candle, IncomingCandle } from "./models/Candle";
 
 type Philosophy = "trend" | "mean" | "arbitrage" | "momentum";
 
@@ -34,8 +34,12 @@ function isPriceMessage(msg: any): msg is Price {
   return msg.type === "price" && typeof msg.price === "number";
 }
 
-function isCandleMessage(msg: any): msg is Candle {
+function isCandleMessage(msg: any): msg is IncomingCandle {
   return msg.type === "candle" && typeof msg.start === "number";
+}
+
+function getCandle(raw: IncomingCandle): Candle {
+  return { ...raw, start: new Date(raw.start * 1000), startInSeconds: raw.start, index: raw.start };
 }
 
 export default function Home() {
@@ -65,16 +69,14 @@ export default function Home() {
       if (isPriceMessage(raw)) {
         updatePrice(raw.symbol, raw.price);
       } else if (isCandleMessage(raw)) {
-        updateCandles(raw.symbol, raw);
+        updateCandles(raw.symbol, getCandle(raw));
       } else {
         console.warn("Unknown message", raw);
       }
     };
     ws.onopen = () => {
       console.log("[WS] connected to", url);
-      for (const token of TOKENS) {
-        ws.send(JSON.stringify({ type: "subscribe", symbols: tokens.map((t) => t.symbol) }));
-      }
+      ws.send(JSON.stringify({ type: "subscribe", symbols: tokens.map((t) => t.symbol) }));
     };
     ws.onclose = () => console.log("[WS] closed");
     ws.onerror = (e) => console.error("[WS] error", e);
