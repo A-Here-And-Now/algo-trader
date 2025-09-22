@@ -1,7 +1,7 @@
 type Price = {
     type: "price";
     symbol: string;
-    time: string; // ISO string (we will parse it)
+    time: Date;
     price: number;
 };
 

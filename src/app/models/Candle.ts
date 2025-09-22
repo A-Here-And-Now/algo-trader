@@ -1,7 +1,7 @@
 type Candle = {
     type: "candle";
     symbol: string;
-    time: string;
+    start: string;
     open: number;
     high: number;
     low: number;

@@ -6,8 +6,7 @@ import {
   YAxis, 
   Tooltip, 
   CartesianGrid, 
-  ResponsiveContainer,
-  Cell
+  ResponsiveContainer
 } from "recharts";
 import { useCandleStore } from "../services/store";
 import Price from "../models/Price";

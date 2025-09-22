@@ -1,23 +1,23 @@
 // components/PriceTicker.tsx
 import React from "react";
+import { usePriceStore } from "../services/store";
 
 export interface PriceTickerProps {
   /** A unique identifier – useful for React’s `key` prop */
   id: number;
-  /** Value that changes over time (e.g. fetched data) */
-  coinbasePrice: number;
-  uniswapPrice: number;
+  symbol: string;
 }
 
 function formatPrice(value: number): string {
   return "$" + (Math.abs(value) < 100 ? value.toFixed(2) : Math.round(value).toString());
 }
 
-export const PriceTicker: React.FC<PriceTickerProps> = ({ id }) => {
-  
+export const PriceTicker: React.FC<PriceTickerProps> = ({ id, symbol }) => {
+  const price = usePriceStore((s) => s.prices[symbol]) || 0;
+
   return (
     <div className="relative inline-flex h-10 w-36 overflow-hidden rounded-lg shadow-sm ring-1 ring-black/10 dark:ring-white/10">
-      {/* Backgrounds with true diagonal split */}
+      {/* Background with diagonal split */}
       <div className="absolute inset-0">
         <div
           className="absolute inset-0 bg-gradient-to-br from-blue-500 to-blue-600"
@@ -32,10 +32,10 @@ export const PriceTicker: React.FC<PriceTickerProps> = ({ id }) => {
       {/* Content */}
       <div className="relative z-10 grid h-full w-full grid-cols-2 text-white">
         <div className="flex items-center justify-center px-2">
-          <span className="font-mono text-sm font-semibold tabular-nums">{formatPrice(coinbasePrice)}</span>
+          <span className="font-mono text-sm font-semibold tabular-nums">{formatPrice(price)}</span>
         </div>
         <div className="flex items-center justify-center px-2">
-          <span className="font-mono text-sm font-semibold tabular-nums">{formatPrice(uniswapPrice)}</span>
+          <span className="font-mono text-sm font-semibold tabular-nums">{"N/A"}</span>
         </div>
       </div>
     </div>

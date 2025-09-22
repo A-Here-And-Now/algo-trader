@@ -24,10 +24,10 @@ type TradeCfg struct {
 }
 
 type Trader struct {
-	cfg      TradeCfg
-	ctx      context.Context
-	cancel   context.CancelFunc
-	updates  chan TradeCfg
+	cfg     TradeCfg
+	ctx     context.Context
+	cancel  context.CancelFunc
+	updates chan TradeCfg
 	// new: per-token signal channel
 	signalCh chan Signal
 	// track positions relative to allocated funds
@@ -68,7 +68,7 @@ func buildJWT(apiKey, apiSecret string) (string, error) {
 	claims := jwt.MapClaims{
 		"iat": now.Unix(),
 		"exp": now.Add(2 * time.Minute).Unix(), // short-lived token
-		"sub": apiKey,                           // example — use actual claim names required by provider
+		"sub": apiKey,                          // example — use actual claim names required by provider
 		// add other claims required by the API (e.g., "kid", "scope", "aud", etc.)
 	}
 
@@ -78,7 +78,7 @@ func buildJWT(apiKey, apiSecret string) (string, error) {
 	if block == nil {
 		log.Fatal("failed to decode PEM block")
 	}
-	
+
 	privKey, err := x509.ParseECPrivateKey(block.Bytes)
 	if err != nil {
 		log.Fatalf("failed to parse EC private key: %v", err)

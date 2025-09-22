@@ -30,19 +30,6 @@ type Token = {
   containerBg: string;
 };
 
-const DUMMY_PRICES: Record<string, { cb: number; uni: number }> = {
-  "ETH-USD": { cb: 2345.12, uni: 2342.87 },
-  "BTC-USD": { cb: 62300.44, uni: 62280.10 },
-  "LINK-USD": { cb: 18.22, uni: 18.18 },
-  "UNI-USD": { cb: 7.84, uni: 7.82 },
-  "AAVE-USD": { cb: 96.10, uni: 96.02 },
-  "DOT-USD": { cb: 6.05, uni: 6.03 },
-  "ENA-USD": { cb: 0.62, uni: 0.61 },
-  "MNT-USD": { cb: 0.48, uni: 0.47 },
-  "OKB-USD": { cb: 42.10, uni: 42.03 },
-  "POL-USD": { cb: 0.72, uni: 0.71 },
-};
-
 function isPriceMessage(msg: any): msg is Price {
   return msg.type === "price" && typeof msg.price === "number";
 }
@@ -256,18 +243,18 @@ export default function Home() {
         </div>
         <div>
           <input type="text" placeholder="Enter a symbol" value={newToken} onChange={(e) => setNewToken(e.target.value)} />
-          <button onClick={addSymbol(newToken)}>Add</button>
+          <button onClick={() => addSymbol(newToken)}>Add</button>
         </div>
 
         {/* Tickers + per-token toggles */}
         <div className="rounded-xl bg-white/60 p-4 shadow-sm ring-1 ring-slate-200">
           <div className="mb-3 text-sm font-medium text-slate-700">Market Prices</div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
-            {TOKENS.map((t) => (
+            {TOKENS.map((t, index) => (
               <div key={t.symbol} className={`flex items-center justify-between gap-3 rounded-med p-3 ring-1 ring-slate-200 ${t.containerBg}`}>
                 <div className="flex items-center gap-3">
                   <div className="w-12 text-xs font-semibold text-slate-600">{t.symbol}</div>
-                  <PriceTicker id={Math.abs(t.symbol.split("").reduce((a, c) => a + c.charCodeAt(0), 0))} />
+                  <PriceTicker id={Math.abs(t.symbol.split("").reduce((a, c) => a + c.charCodeAt(0), 0))} symbol={t.symbol} />
                 </div>
                 <Toggle
                   value={tokenToggles[t.symbol]}

@@ -7,83 +7,37 @@ import (
 	"time"
 )
 
-// SignalType represents buy/sell; hold is omitted (we don't emit holds)
-type SignalType int
-
-const (
-	SignalBuy SignalType = iota
-	SignalSell
-)
-
-func (s SignalType) String() string {
-	switch s {
-	case SignalBuy:
-		return "BUY"
-	case SignalSell:
-		return "SELL"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-type Signal struct {
-	Symbol    string
-	Type      SignalType
-	Percent   float64 // 0-100 meaning percent of allocated funds or position per rules
-	Generated time.Time
-}
-
 // SignalEngine ingests prices and candles and periodically emits signals
 type SignalEngine struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
 	mu             sync.RWMutex
-	priceFeeds     map[string]chan Ticker // per-token price feed channel (input)
-	candleFeeds    map[string]chan Candle    // per-token candle feed channel (input)
-	signalChannels map[string]chan Signal    // per-token signal channel (output)
-
-	// in-memory storage per token
-	pricesByToken  map[string][]Ticker
-	candlesByToken map[string][]Candle
-	lastSignalAt   map[string]time.Time
+	signalingResources     map[string]*SignalingResource // per-token price feed channel (input)
 }
+
 
 func NewSignalEngine(parent context.Context) *SignalEngine {
 	ctx, cancel := context.WithCancel(parent)
 	return &SignalEngine{
 		ctx:            ctx,
 		cancel:         cancel,
-		priceFeeds:     make(map[string]chan Ticker),
-		candleFeeds:    make(map[string]chan Candle),
-		signalChannels: make(map[string]chan Signal),
-		pricesByToken:  make(map[string][]Ticker),
-		candlesByToken: make(map[string][]Candle),
-		lastSignalAt:   make(map[string]time.Time),
+		signalingResources:     make(map[string]*SignalingResource),
 	}
 }
 
 // RegisterToken wires the channels for a token. Manager should create the channels and pass them in.
-func (se *SignalEngine) RegisterToken(symbol string, priceCh chan Ticker, candleCh chan Candle, signalCh chan Signal, priceHistory []Ticker, candleHistory []Candle) {
+func (se *SignalEngine) RegisterToken(symbol string, traderResource *TraderResource, priceHistory []Ticker, candleHistory []Candle) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	se.priceFeeds[symbol] = priceCh
-	se.candleFeeds[symbol] = candleCh
-	se.signalChannels[symbol] = signalCh
-	se.pricesByToken[symbol] = priceHistory
-	se.candlesByToken[symbol] = candleHistory
+	se.signalingResources[symbol] = NewSignalingResource(traderResource, priceHistory, candleHistory)
 }
 
 // UnregisterToken removes channels and state for a token
 func (se *SignalEngine) UnregisterToken(symbol string) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	delete(se.priceFeeds, symbol)
-	delete(se.candleFeeds, symbol)
-	delete(se.signalChannels, symbol)
-	delete(se.pricesByToken, symbol)
-	delete(se.candlesByToken, symbol)
-	delete(se.lastSignalAt, symbol)
+	delete(se.signalingResources, symbol)
 }
 
 // Start launches the engine goroutine per token
@@ -114,16 +68,16 @@ func (se *SignalEngine) run() {
 func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 	se.mu.RLock()
 	// snapshot keys to avoid holding lock while reading channels
-	keys := make([]string, 0, len(se.priceFeeds))
-	for k := range se.priceFeeds {
+	keys := make([]string, 0, len(se.signalingResources))
+	for k := range se.signalingResources {
 		keys = append(keys, k)
 	}
 	se.mu.RUnlock()
 
 	for _, symbol := range keys {
 		se.mu.RLock()
-		priceCh := se.priceFeeds[symbol]
-		candleCh := se.candleFeeds[symbol]
+		priceCh := se.signalingResources[symbol].priceFeed
+		candleCh := se.signalingResources[symbol].candleFeed
 		se.mu.RUnlock()
 
 		// drain non-blocking new data
@@ -148,34 +102,34 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 func (se *SignalEngine) appendPrice(symbol string, tick Ticker) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	se.pricesByToken[symbol] = append(se.pricesByToken[symbol], tick)
+	se.signalingResources[symbol].priceHistory = append(se.signalingResources[symbol].priceHistory, tick)
 	// keep only last 10 minutes for memory safety
 	cutoff := time.Now().Add(-10 * time.Minute)
-	buf := se.pricesByToken[symbol]
+	buf := se.signalingResources[symbol].priceHistory
 	for len(buf) > 0 && buf[0].Timestamp.Before(cutoff) {
 		buf = buf[1:]
 	}
-	se.pricesByToken[symbol] = buf
+	se.signalingResources[symbol].priceHistory = buf
 }
 
 func (se *SignalEngine) appendCandle(symbol string, c Candle) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	se.candlesByToken[symbol] = append(se.candlesByToken[symbol], c)
+	se.signalingResources[symbol].candleHistory = append(se.signalingResources[symbol].candleHistory, c)
 	// keep last 200 candles (~hours depending on interval)
-	buf := se.candlesByToken[symbol]
+	buf := se.signalingResources[symbol].candleHistory
 	if len(buf) > 200 {
 		buf = buf[len(buf)-200:]
 	}
-	se.candlesByToken[symbol] = buf
+	se.signalingResources[symbol].candleHistory = buf
 }
 
 func (se *SignalEngine) maybeEmitSignal(symbol string) {
 	se.mu.RLock()
-	lastAt := se.lastSignalAt[symbol]
-	prices := se.pricesByToken[symbol]
-	candles := se.candlesByToken[symbol]
-	signalCh := se.signalChannels[symbol]
+	lastAt := se.signalingResources[symbol].lastSignalAt
+	prices := se.signalingResources[symbol].priceHistory
+	candles := se.signalingResources[symbol].candleHistory
+	signalCh := se.signalingResources[symbol].signalCh
 	se.mu.RUnlock()
 
 	if signalCh == nil {
@@ -215,7 +169,7 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 	case signalCh <- Signal{Symbol: symbol, Type: stype, Percent: percent, Generated: time.Now()}:
 		log.Printf("[SignalEngine %s] emitted %s %.2f%%", symbol, stype.String(), percent)
 		se.mu.Lock()
-		se.lastSignalAt[symbol] = time.Now()
+		se.signalingResources[symbol].lastSignalAt = time.Now()
 		se.mu.Unlock()
 	default:
 		// drop if receiver is slow
