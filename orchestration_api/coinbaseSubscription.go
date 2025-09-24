@@ -1,22 +1,22 @@
 package main
 
 type CoinbaseSubscription struct {
-	Type 		  string  `json:"type"`
-	ProductIDs    []string  `json:"product_ids"`
-    Channel 	  string  `json:"channel"`
+	Type       string   `json:"type"`
+	ProductIDs []string `json:"product_ids"`
+	Channel    string   `json:"channel"`
 }
 
-func GetCoinbaseSubscriptionPayload(productIDs []string) []CoinbaseSubscription {
+func GetMarketSubscriptionPayload(productIDs []string) []CoinbaseSubscription {
 	return []CoinbaseSubscription{
 		{
-			Type: "subscribe",
+			Type:       "subscribe",
 			ProductIDs: productIDs,
-			Channel: "ticker_batch",
+			Channel:    "ticker_batch",
 		},
 		{
-			Type: "subscribe",
+			Type:       "subscribe",
 			ProductIDs: productIDs,
-			Channel: "candles",
+			Channel:    "candles",
 		},
 	}
 }

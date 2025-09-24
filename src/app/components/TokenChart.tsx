@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import { useCandleStore } from "../services/store";
 import Price from "../models/Price";
-import Candle from "../models/Candle";
+import { Candle } from "../models/Candle";
 
 type WSMessage = Price | Candle;
 
@@ -88,7 +88,7 @@ const MemoizedCandlestick = React.memo(CandlestickShape, (prev, next) => {
 // Custom tooltip for candlestick data
 const CandlestickTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length && payload[0].payload) {
-      const data = payload[0].payload as Candle;
+    const data = payload[0].payload as Candle;
     const change = data.close - data.open;
     const changePercent = ((change / data.open) * 100);
     const isPositive = change >= 0;

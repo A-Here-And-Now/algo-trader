@@ -23,7 +23,7 @@ func (s Strategy) String() string {
 	}
 }
 
-func GetStrategy(s string)  Strategy {
+func GetStrategy(s string) Strategy {
 	switch s {
 	case "MeanReversion":
 		return MeanReversion

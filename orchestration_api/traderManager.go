@@ -24,6 +24,8 @@ type Manager struct {
 	wg                      sync.WaitGroup  // wait for all traders to stop
 	Cfg                     ManagerCfg
 	updates                 chan ManagerCfg
+	marketDataWS            *websocket.Conn
+	userDataWS              *websocket.Conn
 	profitLossUpdates       chan ProfitLossUpdate
 	profitLossTotalForToday float64
 	// added: signal engine and per-token channels
@@ -33,6 +35,7 @@ type Manager struct {
 	subscriptionChannel  chan string
 	frontendConnected    bool
 	frontendMutex        sync.Mutex
+	client               *CoinbaseClient
 }
 
 func (m *Manager) safeAddMarketPriceResource(symbol string) {
@@ -50,7 +53,9 @@ func (m *Manager) safeRemoveMarketPriceResource(symbol string) {
 func (m *Manager) safeAddTraderResource(symbol string, cfg TradeCfg, done chan struct{}, cancel context.CancelFunc, updates chan TradeCfg) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.traderResources[symbol] = NewTraderResource(cfg, done, cancel, updates)
+	tr := NewTraderResource(cfg, done, cancel, updates)
+	tr.client = m.client
+	m.traderResources[symbol] = tr
 }
 
 func (m *Manager) safeRemoveTraderResource(symbol string) {
@@ -110,6 +115,9 @@ func NewManager(funds float64, maxPL int64, strategy Strategy, ctx context.Conte
 		frontendConnected:    false,
 		frontendMutex:        sync.Mutex{},
 	}
+
+	// init REST client
+	manager.client = NewCoinbaseClient("https://api.coinbase.com")
 
 	// init and start signal engine
 	manager.engine = NewSignalEngine(manager.ctx)
@@ -187,7 +195,8 @@ func (m *Manager) Start(tokenStr string) error {
 	m.engine.RegisterToken(tokenStr, m.traderResources[tokenStr], safeMarketPriceResources[tokenStr].priceHistory, safeMarketPriceResources[tokenStr].candleHistory)
 
 	// Build the trader and launch it in its own goroutine.
-	newTrader := NewTrader(cfg, ctx, cancel, updates, m.traderResources[tokenStr].signalChan, m.profitLossUpdates)
+	newTrader := NewTrader(cfg, ctx, cancel, updates, m.traderResources[tokenStr].signalChan, m.traderResources[tokenStr].orderFeed)
+	newTrader.client = m.client
 	go func() {
 		// Ensure we close the done channel even on panic.
 		defer close(done)

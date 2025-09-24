@@ -28,12 +28,28 @@ type Trader struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	updates chan TradeCfg
-	// new: per-token signal channel
 	signalCh chan Signal
-	// track positions relative to allocated funds
-	targetPositionPct float64 // 0..100
-	actualPositionPct float64 // 0..100
-	profitLossUpdates chan ProfitLossUpdate
+	actualPositionUSD                float64 // actual position in USD
+	actualPositionUSDNoGainsOrLosses float64 // actual position in USD without gains or losses
+	targetPositionUSD                float64 // target position in USD
+	orderFeed     chan OrderUpdate
+	pendingOrder  PendingOrder
+	client        *CoinbaseClient
+}
+
+type PendingOrder struct {
+	OrderID string
+	SubmitTime time.Time
+	OrderType SignalType
+	AmountInUSD float64
+}
+
+func (t *Trader) getTargetPositionPct() float64 {
+	return t.targetPositionUSD / t.cfg.AllocatedFunds
+}
+
+func (t *Trader) getActualPositionPct() float64 {
+	return t.actualPositionUSD / t.cfg.AllocatedFunds
 }
 
 // dialWebSocket connects with the JWT included in the HTTP headers for the WebSocket handshake.
@@ -72,8 +88,8 @@ func buildJWT(apiKey, apiSecret string) (string, error) {
 		// add other claims required by the API (e.g., "kid", "scope", "aud", etc.)
 	}
 
-	// Use HS256 here; change to jwt.SigningMethodRS256 and provide a private key if required.
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	// Coinbase advanced trade user websocket expects ES256 with your API private key.
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 	block, _ := pem.Decode([]byte(os.Getenv("COINBASE_PRIVATE_KEY_PEM")))
 	if block == nil {
 		log.Fatal("failed to decode PEM block")
@@ -90,44 +106,50 @@ func buildJWT(apiKey, apiSecret string) (string, error) {
 }
 
 // NewTrader builds a trader instance from a config.
-func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, updates chan TradeCfg, signalCh chan Signal, profitLossUpdates chan ProfitLossUpdate) *Trader {
-	return &Trader{cfg: cfg, ctx: ctx, cancel: cancel, updates: updates, signalCh: signalCh, profitLossUpdates: profitLossUpdates}
+func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, updates chan TradeCfg, signalCh chan Signal, orderFeed chan OrderUpdate) *Trader {
+	return &Trader{cfg: cfg, ctx: ctx, cancel: cancel, updates: updates, signalCh: signalCh, orderFeed: orderFeed}
 }
 
 // Run is the long‑running loop that talks to an exchange, processes signals, etc.
 // It stops when ctx is cancelled.
 func (t *Trader) Run() {
 	log.Printf("[Trader %s] started – AllocatedFunds=%v", t.cfg.Symbol, t.cfg.AllocatedFunds)
-	for {
-		select {
-		case update := <-t.updates:
-			log.Printf("[Trader %s] AllocatedFunds updated – AllocatedFunds=%v", t.cfg.Symbol, update.AllocatedFunds)
-			// adjust actual position to maintain same target percentage of new allocation
-			t.cfg = update
-			t.rebalanceToTarget()
-		case sig := <-t.signalCh:
-			t.handleSignal(sig)
-		case <-t.ctx.Done():
-			t.closePositions() // submit trades to close positions
-
-			return
-		default:
-			t.doTradingLogic()
-		}
-	}
+	// On startup, fetch open positions and try to close them (placeholder)
+	//t.requestInitialPositions()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+    for {
+        select {
+        case update := <-t.updates:
+            t.adjustTargetPositionAccordingToAllocatedFundsUpdate(update)
+        case sig := <-t.signalCh:
+            t.handleSignal(sig)
+        case ord := <-t.orderFeed:
+            t.handleOrderUpdate(ord)
+        case <-ticker.C:
+            t.executeTradesToMakeActualTrackTarget()
+        case <-t.ctx.Done():
+            log.Printf("[Trader %s] Context done...", t.cfg.Symbol)
+            t.closePositions()
+            return
+        }
+    }
 }
 
-func (t *Trader) closePositions() {
-	log.Printf("[Trader %s] closing positions", t.cfg.Symbol)
-}
-
-func (t *Trader) doTradingLogic() {
-	// Idle work; primary actions are driven by signals and config updates
-	time.Sleep(250 * time.Millisecond)
+func (t *Trader) adjustTargetPositionAccordingToAllocatedFundsUpdate(update TradeCfg) {
+	// adjust target position to maintain same target percentage after allocation change
+	oldTargetPct := t.getTargetPositionPct()
+	log.Printf("[Trader %s] AllocatedFunds updating from %v to %v", t.cfg.Symbol, t.cfg.AllocatedFunds, update.AllocatedFunds)
+	t.cfg = update
+	newTargetPct := t.getTargetPositionPct()
+	targetPositionIncrease := (newTargetPct - oldTargetPct) * t.cfg.AllocatedFunds / 100.0
+	t.targetPositionUSD += targetPositionIncrease
+	log.Printf("[Trader %s] Target position increased by %v to a resulting value of %v", t.cfg.Symbol, targetPositionIncrease, t.targetPositionUSD)
 }
 
 // handleSignal executes buy/sell respecting rules on allocated funds and bounds 0..100
 func (t *Trader) handleSignal(s Signal) {
+	log.Printf("[Trader %s] Signal received: Percent=%v Type=%s", t.cfg.Symbol, s.Percent, s.Type)
 	if s.Percent <= 0 {
 		return
 	}
@@ -135,55 +157,100 @@ func (t *Trader) handleSignal(s Signal) {
 	switch s.Type {
 	case SignalBuy:
 		// Buy percent pertains to allocated funds but cannot exceed 100% target
-		allowed := 100.0 - t.targetPositionPct
-		if pct > allowed {
-			pct = allowed
+		t.targetPositionUSD += pct * t.cfg.AllocatedFunds / 100.0
+		if t.targetPositionUSD > t.cfg.AllocatedFunds {
+			t.targetPositionUSD = t.cfg.AllocatedFunds
 		}
-
-		t.targetPositionPct += pct
-		t.executeBuyToTarget()
 	case SignalSell:
 		// Sell percent pertains to position if position > 100, else allocated funds percent
-		if t.actualPositionPct > t.targetPositionPct {
-			pct *= t.actualPositionPct / t.targetPositionPct
+		targetPct := t.getTargetPositionPct()
+		actualPct := t.getActualPositionPct()
+		if actualPct > targetPct {
+			pct *= actualPct / targetPct
 		}
-		if pct > t.targetPositionPct {
-			pct = t.targetPositionPct
+		if pct > targetPct {
+			pct = targetPct
 		}
-		t.targetPositionPct -= pct
-		t.executeSellToTarget()
+		t.targetPositionUSD -= pct * t.cfg.AllocatedFunds / 100.0
 	default:
 		// hold not emitted
 	}
 }
 
-func (t *Trader) rebalanceToTarget() {
-	// If allocation changed, actual percentage shifts; bring actual to target
-	if t.actualPositionPct < t.targetPositionPct {
-		t.executeBuyToTarget()
-	} else if t.actualPositionPct > t.targetPositionPct {
-		t.executeSellToTarget()
-	}
+func (t *Trader) closePositions() {
+	log.Printf("[Trader %s] closing positions", t.cfg.Symbol)
+
+}
+
+func (t *Trader) executeTradesToMakeActualTrackTarget() {
+	// to-do: add a tolerance = 2-4x the % fee for a single trade
+
+	// if actual (minus gains or losses) - tolerance> target, sell
+
+	// if actual (minus gains or losses) + tolerance < target, buy
+
+	// else do nothing
 }
 
 func (t *Trader) executeBuyToTarget() {
-	if t.actualPositionPct >= t.targetPositionPct {
-		return
+	amountToBuy := t.targetPositionUSD - t.actualPositionUSDNoGainsOrLosses
+	if err := t.submitBuyToCoinbase(amountToBuy); err != nil {
+		log.Printf("failed to submit buy to coinbase: %v", err)
 	}
-	delta := t.targetPositionPct - t.actualPositionPct
-	// place buy order sized to 'delta' percent of allocated funds
-	log.Printf("[Trader %s] BUY to target: delta=%.2f%% (actual=%.2f target=%.2f)", t.cfg.Symbol, delta, t.actualPositionPct, t.targetPositionPct)
-	// simulate immediate fill
-	t.actualPositionPct = t.targetPositionPct
 }
 
 func (t *Trader) executeSellToTarget() {
-	if t.actualPositionPct <= t.targetPositionPct {
-		return
+	amountToSell := t.actualPositionUSDNoGainsOrLosses - t.targetPositionUSD
+	if err := t.submitSellToCoinbase(amountToSell); err != nil {
+		log.Printf("failed to submit sell to coinbase: %v", err)
 	}
-	delta := t.actualPositionPct - t.targetPositionPct
-	// place sell order sized to 'delta' percent
-	log.Printf("[Trader %s] SELL to target: delta=%.2f%% (actual=%.2f target=%.2f)", t.cfg.Symbol, delta, t.actualPositionPct, t.targetPositionPct)
-	// simulate immediate fill
-	t.actualPositionPct = t.targetPositionPct
 }
+
+func (t *Trader) submitBuyToCoinbase(amount float64) error{
+	response, err := coinbaseClient.CreateOrder(t.ctx, t.cfg.Symbol, amount, true)
+	if err != nil {
+		log.Printf("failed to submit buy to coinbase: %v", err)
+		return err
+	}
+	log.Printf("submitted buy to coinbase: %v", response)
+	t.pendingOrder = getPendingOrder(response, SignalBuy, amount)
+	return nil
+}
+
+func (t *Trader) submitSellToCoinbase(amount float64) error {
+	response, err := coinbaseClient.CreateOrder(t.ctx, t.cfg.Symbol, amount, true)
+	if err != nil {
+		log.Printf("failed to submit buy to coinbase: %v", err)
+		return err
+	}
+	log.Printf("submitted buy to coinbase: %v", response)
+	t.pendingOrder = getPendingOrder(response, SignalBuy, amount)
+	return nil
+
+}
+
+func (t *Trader) handleOrderUpdate(up OrderUpdate) {
+
+}
+
+func getPendingOrder(response CreateOrderResponse, orderType SignalType, amount float64) PendingOrder {
+	return PendingOrder{
+		OrderID: response.OrderID,
+		SubmitTime: time.Now(),
+		OrderType: orderType,
+		AmountInUSD: amount,
+	}
+}
+
+//  - i need to open a web socket connection in the trader manager to get order and position valuation updates.
+//  - those updates have to go into the manager and be routed to the ui and the trader (we don't need to persist these yet).
+//  - the trader will have to pull open positions in its cryptocurrency upon starting up. it will start by trying to close those positions.
+//  - the trader needs to know the status of its orders so it can update its 'actual position' and 'actual position w/o gains or losses'.
+//  - pretty sure we can remove profit loss channel from trader/manager in favor of an order results channel and position valuation channel.
+//  - the trader has to let an order sit for some time before cancelling it and sending another,
+//  - cancelling orders before the timeout if a reverse signal comes in is worth a shot. if it doesnt get cancelled in time, we'll get an update through the order fulfillment channel and the logic stays the same because all that does it update our actual position that the trader already has logic to adjust that to track the target position
+//  - the trader has to assume the order will be filled and temporarily update the 'actual position w/o gains/losses' so it doesn't end up just submitting order after order while waiting for the order to be filled
+//  - so the trader has to store its order details immediately upon submission and expect a certain time for an order confirmation to come through the corresponding channel from the manager and if that time arrives before the confirmation, you send a cancellation order then wipe the submission from memory
+//  - all the existing coinbase interactions don't need jwts because they are public, but the ones pertaining to these details will need jwts, according to the coinbase docs: https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/websocket/websocket-overview
+//  - so, order submission requests, order/position valuation web socket connection requests and subscription requests over that websocket will all need jwts inserted according to that documentation. please review it to make sure both the order submission requests and websocket requests have jwts inserted properly.
+//  - please use the existing jwt creation functions to create the jwts

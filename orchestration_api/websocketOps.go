@@ -11,6 +11,31 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type Order struct {
+	AvgPrice           string `json:"avg_price"`
+	ClientOrderID      string `json:"client_order_id"`
+	CumulativeQuantity string `json:"cumulative_quantity"`
+	FilledValue        string `json:"filled_value"`
+	OrderID            string `json:"order_id"`
+	OrderSide          string `json:"order_side"`
+	OrderType          string `json:"order_type"`
+	ProductID          string `json:"product_id"`
+	Status             string `json:"status"`
+	LimitPrice         string `json:"limit_price"`
+	CreationTime       string `json:"creation_time"`
+}
+
+// (Positions removed; we only care about order updates here)
+
+// UserChannelMessage represents the Coinbase Advanced Trade "user" channel payload
+type UserChannelMessage struct {
+	Channel string `json:"channel"`
+	Events  []struct {
+		Type   string  `json:"type"`
+		Orders []Order `json:"orders"`
+	} `json:"events"`
+}
+
 func (m *Manager) startCoinbaseFeed(ctx context.Context, cbAdvUrl string) {
 	u, _ := url.Parse(cbAdvUrl)
 	go m.runMarketDataWebSocket(ctx, u.String())
@@ -47,12 +72,15 @@ func (m *Manager) runMarketDataWebSocket(ctx context.Context, wsURL string) {
 			}
 			continue
 		}
-
+		m.marketDataWS = conn
+		defer func() {
+			m.marketDataWS = nil
+		}()
 		// Enable automatic ping/pong handling (library does it for us)
 		conn.SetPongHandler(func(appData string) error { return nil })
 
 		// Subscribe to all tokens
-		m.subscribeToAllTokens(conn)
+		m.subscribeToMarketDataForAllTokens(conn)
 
 		// Reset backoff after successful connect
 		backoff = 1 * time.Second
@@ -72,7 +100,7 @@ func (m *Manager) runMarketDataWebSocket(ctx context.Context, wsURL string) {
 			for {
 				select {
 				case symbol := <-m.subscriptionChannel:
-					m.subscribeToNewToken(conn, symbol)
+					m.subscribeToNewToken(symbol)
 				case <-ctx.Done():
 					return
 				case <-done: // Connection closed
@@ -86,11 +114,13 @@ func (m *Manager) runMarketDataWebSocket(ctx context.Context, wsURL string) {
 		case <-ctx.Done():
 			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "client shutdown"))
 			_ = conn.Close()
+			m.marketDataWS = nil
 			<-done
 			return
 		case <-done:
 			// connection closed by readLoop; attempt to reconnect
 			_ = conn.Close()
+			m.marketDataWS = nil
 			log.Printf("websocket disconnected; will attempt reconnect")
 			// short sleep before reconnect
 			time.Sleep(500 * time.Millisecond)
@@ -210,24 +240,33 @@ func pingLoop(conn *websocket.Conn, ctx context.Context) {
 	}
 }
 
-func (m *Manager) subscribeToAllTokens(conn *websocket.Conn) {
+func (m *Manager) subscribeToMarketDataForAllTokens(conn *websocket.Conn) {
 	// Subscription json to the two channels we need, for all products in the "tokens" array
-	subPayload := GetCoinbaseSubscriptionPayload(tokens)
-	m.sendPayload(conn, subPayload)
-}
-
-func (m *Manager) subscribeToNewToken(conn *websocket.Conn, symbol string) {
-	subPayload := GetCoinbaseSubscriptionPayload([]string{symbol})
-	m.sendPayload(conn, subPayload)
-}
-
-func (m *Manager) sendPayload(conn *websocket.Conn, payload []CoinbaseSubscription) {
-	for _, p := range payload {
-		if err := conn.WriteJSON(p); err != nil {
+	subPayload := GetMarketSubscriptionPayload(tokens)
+	for _, p := range subPayload {
+		if err := m.marketDataWS.WriteJSON(p); err != nil {
 			log.Printf("Failed to send subscription: %v", err)
 		}
 	}
 }
+
+func (m *Manager) subscribeToNewToken(symbol string) {
+	marketDataSubPayload := GetMarketSubscriptionPayload([]string{symbol})
+	for _, p := range marketDataSubPayload {
+		if err := m.marketDataWS.WriteJSON(p); err != nil {
+			log.Printf("Failed to send subscription: %v", err)
+		}
+	}
+	userDataSubPayload, err := GetUserDataSubscriptionPayload([]string{symbol})
+	if err != nil {
+		log.Printf("failed to get user data subscription payload: %v", err)
+		return
+	}
+	if err := m.userDataWS.WriteJSON(userDataSubPayload); err != nil {
+		log.Printf("Failed to send subscription: %v", err)
+	}
+}
+
 
 type WSMessage struct {
 	Type    string   `json:"type"`
@@ -338,6 +377,10 @@ func (m *Manager) wsHandler(w http.ResponseWriter, r *http.Request) {
 						if err := conn.WriteJSON(msg); err != nil {
 							log.Printf("[WS] write error: %v", err)
 						}
+					case ord := <-resource.orderFeed:
+						if err := conn.WriteJSON(ord); err != nil {
+							log.Printf("[WS] write error: %v", err)
+						}
 					default:
 						break // No price/candle data available, continue
 					}
@@ -346,5 +389,173 @@ func (m *Manager) wsHandler(w http.ResponseWriter, r *http.Request) {
 			// Small sleep to prevent busy loop
 			time.Sleep(15 * time.Millisecond)
 		}
+	}
+}
+
+// ======================
+// User-authenticated WS for orders and positions
+// ======================
+
+type OrderUpdate struct {
+	Channel   string    `json:"channel"` // e.g., "orders"
+	ProductID string    `json:"product_id"`
+	OrderID   string    `json:"order_id"`
+	Status    string    `json:"status"` // open, filled, cancelled, etc.
+	FilledQty string    `json:"filled_qty"`
+	Price     string    `json:"price"`
+	Side      string    `json:"side"`
+	Ts        time.Time `json:"ts"`
+}
+
+func (o Order) toOrderUpdate() OrderUpdate {
+	return OrderUpdate{
+		Channel:   "orders",
+		ProductID: o.ProductID,
+		OrderID:   o.OrderID,
+		Status:    o.Status,
+		FilledQty: o.CumulativeQuantity,
+		Price:     chooseNonEmpty(o.LimitPrice, o.AvgPrice),
+		Side:      o.OrderSide,
+		Ts:        time.Now(),
+	}
+}
+
+// startOrderAndPositionValuationWebSocket connects to the user websocket and subscribes with JWT
+func (m *Manager) startOrderAndPositionValuationWebSocket(ctx context.Context, wsURL string) {
+	go m.runUserWebSocket(ctx, wsURL)
+}
+
+func (m *Manager) runUserWebSocket(ctx context.Context, wsURL string) {
+	backoff := 1 * time.Second
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// Dial with JWT auth header
+		conn, resp, err := dialWebSocketWithAuth(ctx, wsURL)
+		if err != nil {
+			if resp != nil {
+				log.Printf("user websocket dial failed, status=%d: %v", resp.StatusCode, err)
+			} else {
+				log.Printf("user websocket dial failed: %v", err)
+			}
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+			continue
+		}
+
+		m.userDataWS = conn
+		defer func() {
+			m.userDataWS = nil
+		}()
+		// Send subscription messages for orders and positions per product
+		if err := m.sendUserSubscriptions(conn); err != nil {
+			log.Printf("failed to subscribe on user ws: %v", err)
+			_ = conn.Close()
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		backoff = 1 * time.Second
+		log.Printf("user websocket connected")
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			m.readUserLoop(conn)
+		}()
+
+		go pingLoop(conn, ctx)
+
+		select {
+		case <-ctx.Done():
+			_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "client shutdown"))
+			_ = conn.Close()
+			m.userDataWS = nil
+			<-done
+			return
+		case <-done:
+			_ = conn.Close()
+			m.userDataWS = nil
+			log.Printf("user websocket disconnected; will attempt reconnect")
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+}
+
+func (m *Manager) sendUserSubscriptions(conn *websocket.Conn) error {
+	sub, err := GetUserDataSubscriptionPayload(tokens)
+	if err != nil {
+		return err
+	}
+	return conn.WriteJSON(sub)
+}
+
+func GetUserDataSubscriptionPayload(tokens []string) (map[string]any, error) {
+	// Subscribe once to unified "user" channel for all products, include jwt in payload
+	jwt, err := buildJWT(apiKey, apiSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]any{
+		"type":        "subscribe",
+		"channel":     "user",
+		"product_ids": tokens,
+		"jwt":         jwt,
+	}, nil
+}
+
+
+func (m *Manager) readUserLoop(conn *websocket.Conn) {
+	for {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			log.Printf("[UserWS] read error: %v", err)
+			return
+		}
+
+		var msg UserChannelMessage
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			log.Printf("[UserWS] malformed user message: %v", err)
+			continue
+		}
+		if msg.Channel != "user" {
+			continue
+		}
+		for _, ev := range msg.Events {
+			for _, o := range ev.Orders {
+				update := o.toOrderUpdate()
+				m.routeOrderUpdate(update)
+			}
+		}
+	}
+}
+
+func chooseNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func (m *Manager) routeOrderUpdate(up OrderUpdate) {
+	safeMarketPriceResources := m.safeGetMarketPriceResources()
+	safeTraderResources := m.safeGetTraderResources()
+	if _, ok := safeMarketPriceResources[up.ProductID]; ok {
+		writeToChannelAndBufferLatest(safeMarketPriceResources[up.ProductID].orderFeed, up)
+	} else {
+		log.Printf("routeOrderUpdate: %s not found in marketPriceResources", up.ProductID)
+	}
+	if _, ok := safeTraderResources[up.ProductID]; ok {
+		writeToChannelAndBufferLatest(safeTraderResources[up.ProductID].orderFeed, up)
+	} else {
+		log.Printf("routeOrderUpdate: %s not found in traderResources", up.ProductID)
 	}
 }

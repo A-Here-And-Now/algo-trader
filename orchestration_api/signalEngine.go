@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -12,17 +13,16 @@ type SignalEngine struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu             sync.RWMutex
-	signalingResources     map[string]*SignalingResource // per-token price feed channel (input)
+	mu                 sync.RWMutex
+	signalingResources map[string]*SignalingResource // per-token price feed channel (input)
 }
-
 
 func NewSignalEngine(parent context.Context) *SignalEngine {
 	ctx, cancel := context.WithCancel(parent)
 	return &SignalEngine{
-		ctx:            ctx,
-		cancel:         cancel,
-		signalingResources:     make(map[string]*SignalingResource),
+		ctx:                ctx,
+		cancel:             cancel,
+		signalingResources: make(map[string]*SignalingResource),
 	}
 }
 
@@ -103,11 +103,11 @@ func (se *SignalEngine) appendPrice(symbol string, tick Ticker) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	se.signalingResources[symbol].priceHistory = append(se.signalingResources[symbol].priceHistory, tick)
-	// keep only last 10 minutes for memory safety
-	cutoff := time.Now().Add(-10 * time.Minute)
+	// keep only last N ticks for memory safety
 	buf := se.signalingResources[symbol].priceHistory
-	for len(buf) > 0 && buf[0].Timestamp.Before(cutoff) {
-		buf = buf[1:]
+	const maxTicks = 1200 // ~10 minutes if ~2/s
+	if len(buf) > maxTicks {
+		buf = buf[len(buf)-maxTicks:]
 	}
 	se.signalingResources[symbol].priceHistory = buf
 }
@@ -140,12 +140,8 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 		return
 	}
 
-	// require at least 5 minutes of data and 60s since last signal
-	oldest := prices[0].Ts
-	if len(candles) > 0 && candles[0].StartTs.Before(oldest) {
-		oldest = candles[0].StartTs
-	}
-	if time.Since(oldest) < 5*time.Minute {
+	// require at least some data and 60s since last signal
+	if len(prices) < 60 || len(candles) < 5 {
 		return
 	}
 	if !lastAt.IsZero() && time.Since(lastAt) < 60*time.Second {
@@ -155,7 +151,11 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 	// Dummy logic: alternate buy/sell 10% based on last close vs last price
 	percent := 10.0
 	stype := SignalBuy
-	lastPrice := prices[len(prices)-1].Price
+	lastPriceStr := prices[len(prices)-1].Price
+	lastPrice, err := strconv.ParseFloat(lastPriceStr, 64)
+	if err != nil {
+		return
+	}
 	lastClose := candles[len(candles)-1].Close
 	if lastPrice < lastClose {
 		stype = SignalBuy
@@ -166,7 +166,7 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 	}
 
 	select {
-	case signalCh <- Signal{Symbol: symbol, Type: stype, Percent: percent, Generated: time.Now()}:
+	case signalCh <- Signal{Symbol: symbol, Type: stype, Percent: percent, Time: time.Now()}:
 		log.Printf("[SignalEngine %s] emitted %s %.2f%%", symbol, stype.String(), percent)
 		se.mu.Lock()
 		se.signalingResources[symbol].lastSignalAt = time.Now()

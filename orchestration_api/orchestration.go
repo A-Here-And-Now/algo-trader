@@ -23,7 +23,7 @@ var tokenToggles = make(map[string]bool)
 
 var availableFunds = 50000.0
 var mgr *Manager
-
+var coinbaseClient *CoinbaseClient
 type ctxKey struct{}
 
 var loggerKey = ctxKey{}
@@ -103,19 +103,19 @@ func updateStrategyHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func priceHistoryHandler(w http.ResponseWriter, r *http.Request) {
-    allPriceHistory := make(map[string][]Ticker)
-    for symbol, resource := range mgr.marketPriceResources {
-        allPriceHistory[symbol] = resource.priceHistory
-    }
-    json.NewEncoder(w).Encode(allPriceHistory)
+	allPriceHistory := make(map[string][]Ticker)
+	for symbol, resource := range mgr.marketPriceResources {
+		allPriceHistory[symbol] = resource.priceHistory
+	}
+	json.NewEncoder(w).Encode(allPriceHistory)
 }
 
 func candleHistoryHandler(w http.ResponseWriter, r *http.Request) {
-    allCandleHistory := make(map[string][]Candle)
-    for symbol, resource := range mgr.marketPriceResources {
-        allCandleHistory[symbol] = resource.candleHistory
-    }
-    json.NewEncoder(w).Encode(allCandleHistory)
+	allCandleHistory := make(map[string][]Candle)
+	for symbol, resource := range mgr.marketPriceResources {
+		allCandleHistory[symbol] = resource.candleHistory
+	}
+	json.NewEncoder(w).Encode(allCandleHistory)
 }
 
 // ---------- MAIN ----------
@@ -176,6 +176,8 @@ func main() {
 	}()
 
 	mgr.startCoinbaseFeed(shutdownCtx, "wss://advanced-trade-ws.coinbase.com")
+	mgr.startOrderAndPositionValuationWebSocket(shutdownCtx, "wss://advanced-trade-ws-user.coinbase.com")
+	coinbaseClient = NewCoinbaseClient(os.Getenv("COINBASE_URL"))
 
 	// wait for shutdown signal
 	<-shutdownCtx.Done()

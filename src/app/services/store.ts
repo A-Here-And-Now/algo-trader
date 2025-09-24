@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
-import Candle from "../models/Candle";
+import { Candle } from "../models/Candle";
 
 type CandleState = {
   candles: { [symbol: string]: Candle[] };

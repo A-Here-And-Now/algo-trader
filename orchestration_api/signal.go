@@ -3,10 +3,10 @@ package main
 import "time"
 
 type Signal struct {
-	Symbol    string
-	Type      SignalType
-	Percent   float64 // 0-100 meaning percent of allocated funds or position per rules
-	Generated time.Time
+	Symbol  string
+	Type    SignalType
+	Percent float64 // 0-100 meaning percent of allocated funds or position per rules
+	Time    time.Time
 }
 
 // SignalType represents buy/sell; hold is omitted (we don't emit holds)
