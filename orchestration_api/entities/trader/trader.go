@@ -127,17 +127,19 @@ func (t *Trader) handleOrderUpdate(up coinbase.OrderUpdate) {
 				cumulativeQuantity, _ := strconv.ParseFloat(up.FilledQty, 64)
 				filledUSD := t.pendingOrder.OriginalAmountInUSD - leaves
 				filledTokens := cumulativeQuantity - t.pendingOrder.AlreadyFilledInTokens
+				alreadyFilledUSD := t.pendingOrder.AlreadyFilledInUSD
+				alreadyFilledTokens := t.pendingOrder.AlreadyFilledInTokens
 
-				// start by setting what we know to be the amount left to be filled
-				t.pendingOrder.CurrentAmountLeftToBeFilledInUSD = leaves
+				t.updatePendingOrderBalances(leaves, filledUSD, filledTokens)
 
 				// now we update the actual position (the one w/o gains or losses) minus the amount that we already delta'd our actual position from previous order updates
-				t.usdAmountPerFulfilledOrders += filledUSD - t.pendingOrder.AlreadyFilledInUSD
-				t.actualPositionToken += filledTokens - t.pendingOrder.AlreadyFilledInTokens
-
-				// now we update the pending order to reflect the amount that we have already filled
-				t.pendingOrder.AlreadyFilledInUSD = filledUSD
-				t.pendingOrder.AlreadyFilledInTokens = filledTokens
+				if up.Side == "BUY" {
+					t.usdAmountPerFulfilledOrders += filledUSD - alreadyFilledUSD
+					t.actualPositionToken += filledTokens - alreadyFilledTokens
+				} else {
+					t.usdAmountPerFulfilledOrders -= filledUSD - alreadyFilledUSD
+					t.actualPositionToken -= filledTokens - alreadyFilledTokens
+				}
 			}
 		}
 	}

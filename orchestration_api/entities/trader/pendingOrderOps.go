@@ -42,6 +42,8 @@ func (t *Trader) setPendingOrder(order models.PendingOrder) {
 	t.pendingOrder = &order
 }
 
-func (t *Trader) updatePendingOrderBalance(amount float64) {
-	t.pendingOrder.CurrentAmountLeftToBeFilledInUSD -= amount
+func (t *Trader) updatePendingOrderBalances(currentAmountLeftToBeFilledInUSD float64, alreadyFilledUSD float64, alreadyFilledTokens float64) {
+	t.pendingOrder.CurrentAmountLeftToBeFilledInUSD = currentAmountLeftToBeFilledInUSD
+	t.pendingOrder.AlreadyFilledInUSD = alreadyFilledUSD
+	t.pendingOrder.AlreadyFilledInTokens = alreadyFilledTokens
 }
