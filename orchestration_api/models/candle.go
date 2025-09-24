@@ -1,4 +1,4 @@
-package main
+package models
 
 import "time"
 
@@ -34,7 +34,7 @@ type FrontEndCandle struct {
 	Symbol string  `json:"symbol"`
 }
 
-func getFrontEndCandle(candle Candle) FrontEndCandle {
+func GetFrontEndCandle(candle Candle) FrontEndCandle {
 	return FrontEndCandle{
 		Start:  candle.Start,
 		High:   candle.High,

@@ -1,23 +1,16 @@
-package main
+package trader
 
 import (
 	"log"
 	"time"
+
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 )
 
-type PendingOrder struct {
-	OrderID                          string
-	SubmitTime                       time.Time
-	OrderType                        SignalType
-	OriginalAmountInUSD              float64
-	CurrentAmountLeftToBeFilledInUSD float64
-	AlreadyFilledInUSD               float64
-	OriginalAmountInTokens           float64
-	AlreadyFilledInTokens            float64
-}
-
-func (t *Trader) getPendingOrderFromResponse(response CreateOrderResponse, orderType SignalType, amount float64) *PendingOrder {
-	return &PendingOrder{
+func (t *Trader) getPendingOrderFromResponse(response coinbase.CreateOrderResponse, orderType enum.SignalType, amount float64) models.PendingOrder {
+	return models.PendingOrder{
 		OrderID:                          response.OrderID,
 		SubmitTime:                       time.Now(),
 		OrderType:                        orderType,
@@ -45,7 +38,7 @@ func (t *Trader) clearPendingOrder() {
 	t.pendingOrder = nil
 }
 
-func (t *Trader) setPendingOrder(order PendingOrder) {
+func (t *Trader) setPendingOrder(order models.PendingOrder) {
 	t.pendingOrder = &order
 }
 

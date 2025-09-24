@@ -1,4 +1,4 @@
-package main
+package api_helper
 
 import "sync"
 import "fmt"

@@ -1,4 +1,4 @@
-package main
+package coinbase
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -17,8 +16,10 @@ import (
 )
 
 type CoinbaseClient struct {
-	baseURL string
-	http    *http.Client
+	baseURL   string
+	http      *http.Client
+	apiKey    string
+	apiSecret string
 }
 
 // ===== Typed models based on Coinbase docs =====
@@ -78,16 +79,16 @@ type ListOrdersResponse struct {
 	Cursor  string      `json:"cursor"`
 }
 
-func NewCoinbaseClient(baseURL string) *CoinbaseClient {
+func NewCoinbaseClient(baseURL string, apiKey string, apiSecret string) *CoinbaseClient {
 	return &CoinbaseClient{
-		baseURL: baseURL,
-		http:    &http.Client{Timeout: 10 * time.Second},
+		baseURL:   baseURL,
+		http:      &http.Client{Timeout: 10 * time.Second},
+		apiKey:    apiKey,
+		apiSecret: apiSecret,
 	}
 }
 
-func buildJWT(apiKey, apiSecret string) (string, error) {
-	// Typical claims: iat (issued at), exp (expiry), sub (subject) or apikey
-	apiKey = os.Getenv("COINBASE_API_KEY")
+func BuildJWT(apiKey, apiSecret string) (string, error) {
 
 	now := time.Now().UTC()
 	claims := jwt.MapClaims{
@@ -99,7 +100,7 @@ func buildJWT(apiKey, apiSecret string) (string, error) {
 
 	// Coinbase advanced trade user websocket expects ES256 with your API private key.
 	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
-	block, _ := pem.Decode([]byte(os.Getenv("COINBASE_PRIVATE_KEY_PEM")))
+	block, _ := pem.Decode([]byte(apiSecret))
 	if block == nil {
 		log.Fatal("failed to decode PEM block")
 	}
@@ -116,7 +117,7 @@ func buildJWT(apiKey, apiSecret string) (string, error) {
 
 // sendWithJwt autogenerates a fresh JWT per request and sets Authorization: Bearer <jwt>.
 func (c *CoinbaseClient) sendWithJwt(ctx context.Context, req *http.Request, v any) error {
-	jwtTok, err := buildJWT(apiKey, apiSecret)
+	jwtTok, err := BuildJWT(c.apiKey, c.apiSecret)
 	if err != nil {
 		return err
 	}
@@ -158,7 +159,7 @@ func (c *CoinbaseClient) GetAllTokenBalances(ctx context.Context) (map[string]fl
 		if account.Active && account.Ready {
 			// Calculate total balance (available + hold)
 			availableVal := account.AvailableBalance.Value
-			balances[account.Currency] = parseFloatSafe(availableVal)
+			balances[account.Currency] = ParseFloatSafe(availableVal)
 		}
 	}
 
@@ -166,7 +167,7 @@ func (c *CoinbaseClient) GetAllTokenBalances(ctx context.Context) (map[string]fl
 }
 
 // Helper function to safely parse float strings
-func parseFloatSafe(s string) float64 {
+func ParseFloatSafe(s string) float64 {
 	if s == "" {
 		return 0
 	}
@@ -207,7 +208,7 @@ func (c *CoinbaseClient) privateCreateOrder(ctx context.Context, body CreateOrde
 		return CreateOrderResponse{}, err
 	}
 	url := fmt.Sprintf("%s/api/v3/brokerage/orders", c.baseURL)
-	req, _ := http.NewRequest(http.MethodPost, url, bytesReader(jsonBody))
+	req, _ := http.NewRequest(http.MethodPost, url, BytesReader(jsonBody))
 	var out CreateOrderResponse
 	return out, c.sendWithJwt(context.Background(), req, &out)
 }
@@ -221,7 +222,7 @@ type EditOrderResponse struct {
 
 func (c *CoinbaseClient) EditOrder(ctx context.Context, body []byte) (EditOrderResponse, error) {
 	url := fmt.Sprintf("%s/api/v3/brokerage/orders/edit", c.baseURL)
-	req, _ := http.NewRequest(http.MethodPost, url, bytesReader(body))
+	req, _ := http.NewRequest(http.MethodPost, url, BytesReader(body))
 	var out EditOrderResponse
 	return out, c.sendWithJwt(ctx, req, &out)
 }
@@ -234,12 +235,12 @@ func (c *CoinbaseClient) CancelOrders(ctx context.Context, orderID string) error
 	if err != nil {
 		return err
 	}
-	req, _ := http.NewRequest(http.MethodDelete, url, bytesReader(body))
+	req, _ := http.NewRequest(http.MethodDelete, url, BytesReader(body))
 	return c.sendWithJwt(ctx, req, nil)
 }
 
 // helper to avoid importing bytes directly elsewhere
-func bytesReader(b []byte) *bytesReaderWrapper { return &bytesReaderWrapper{b: b} }
+func BytesReader(b []byte) *bytesReaderWrapper { return &bytesReaderWrapper{b: b} }
 
 type bytesReaderWrapper struct{ b []byte }
 

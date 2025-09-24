@@ -1,4 +1,4 @@
-package main
+package signaler
 
 import (
 	"context"
@@ -6,6 +6,9 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 )
 
 // SignalEngine ingests prices and candles and periodically emits signals
@@ -27,10 +30,10 @@ func NewSignalEngine(parent context.Context) *SignalEngine {
 }
 
 // RegisterToken wires the channels for a token. Manager should create the channels and pass them in.
-func (se *SignalEngine) RegisterToken(symbol string, traderResource *TraderResource, priceHistory []Ticker, candleHistory []Candle) {
+func (se *SignalEngine) RegisterToken(symbol string, priceFeed chan models.Ticker, candleFeed chan models.Candle, signalCh chan enum.Signal, priceHistory []models.Ticker, candleHistory []models.Candle) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	se.signalingResources[symbol] = NewSignalingResource(traderResource, priceHistory, candleHistory)
+	se.signalingResources[symbol] = NewSignalingResource(priceFeed, candleFeed, signalCh, priceHistory, candleHistory)
 }
 
 // UnregisterToken removes channels and state for a token
@@ -99,7 +102,7 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 	}
 }
 
-func (se *SignalEngine) appendPrice(symbol string, tick Ticker) {
+func (se *SignalEngine) appendPrice(symbol string, tick models.Ticker) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	se.signalingResources[symbol].priceHistory = append(se.signalingResources[symbol].priceHistory, tick)
@@ -112,7 +115,7 @@ func (se *SignalEngine) appendPrice(symbol string, tick Ticker) {
 	se.signalingResources[symbol].priceHistory = buf
 }
 
-func (se *SignalEngine) appendCandle(symbol string, c Candle) {
+func (se *SignalEngine) appendCandle(symbol string, c models.Candle) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	se.signalingResources[symbol].candleHistory = append(se.signalingResources[symbol].candleHistory, c)
@@ -150,7 +153,7 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 
 	// Dummy logic: alternate buy/sell 10% based on last close vs last price
 	percent := 10.0
-	stype := SignalBuy
+	stype := enum.SignalBuy
 	lastPriceStr := prices[len(prices)-1].Price
 	lastPrice, err := strconv.ParseFloat(lastPriceStr, 64)
 	if err != nil {
@@ -158,15 +161,15 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 	}
 	lastClose := candles[len(candles)-1].Close
 	if lastPrice < lastClose {
-		stype = SignalBuy
+		stype = enum.SignalBuy
 	} else if lastPrice > lastClose {
-		stype = SignalSell
+		stype = enum.SignalSell
 	} else {
 		return
 	}
 
 	select {
-	case signalCh <- Signal{Symbol: symbol, Type: stype, Percent: percent, Time: time.Now()}:
+	case signalCh <- enum.Signal{Symbol: symbol, Type: stype, Percent: percent, Time: time.Now()}:
 		log.Printf("[SignalEngine %s] emitted %s %.2f%%", symbol, stype.String(), percent)
 		se.mu.Lock()
 		se.signalingResources[symbol].lastSignalAt = time.Now()

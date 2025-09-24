@@ -1,4 +1,4 @@
-package main
+package manager
 
 import (
 	"context"
@@ -9,20 +9,23 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/channel_helper"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	"github.com/gorilla/websocket"
 )
 
 type UserChannelMessage struct {
 	Channel string `json:"channel"`
 	Events  []struct {
-		Type   string  `json:"type"`
-		Orders []Order `json:"orders"`
+		Type   string           `json:"type"`
+		Orders []coinbase.Order `json:"orders"`
 	} `json:"events"`
 }
 
 // dialWebSocket connects with the JWT included in the HTTP headers for the WebSocket handshake.
-func dialWebSocketWithAuth(ctx context.Context, wsURL string) (*websocket.Conn, *http.Response, error) {
-	jwtTok, err := buildJWT(apiKey, apiSecret)
+func DialWebSocketWithAuth(ctx context.Context, wsURL string, apiKey string, apiSecret string) (*websocket.Conn, *http.Response, error) {
+	jwtTok, err := coinbase.BuildJWT(apiKey, apiSecret)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build jwt: %w", err)
 	}
@@ -44,7 +47,7 @@ func dialWebSocketWithAuth(ctx context.Context, wsURL string) (*websocket.Conn, 
 	return conn, resp, err
 }
 
-func (m *Manager) startCoinbaseFeed(ctx context.Context, cbAdvUrl string) {
+func (m *Manager) StartCoinbaseFeed(ctx context.Context, cbAdvUrl string) {
 	u, _ := url.Parse(cbAdvUrl)
 	go m.runMarketDataWebSocket(ctx, u.String())
 }
@@ -101,7 +104,7 @@ func (m *Manager) runMarketDataWebSocket(ctx context.Context, wsURL string) {
 		}()
 
 		// Optionally: start a ping loop to keep connection alive (some servers require it).
-		go pingLoop(conn, ctx)
+		go PingLoop(conn, ctx)
 
 		go func() {
 			for {
@@ -157,7 +160,7 @@ func (m *Manager) readLoop(conn *websocket.Conn) {
 
 		switch channelType.Channel {
 		case "ticker_batch":
-			var t TickerMsg
+			var t models.TickerMsg
 			if err := json.Unmarshal(raw, &t); err != nil {
 				log.Printf("[WS] ticker unmarshal error: %v", err)
 				continue
@@ -170,7 +173,7 @@ func (m *Manager) readLoop(conn *websocket.Conn) {
 			}
 
 		case "candles":
-			var c CandleMsg
+			var c models.CandleMsg
 			if err := json.Unmarshal(raw, &c); err != nil {
 				log.Printf("[WS] candle unmarshal error: %v", err)
 				continue
@@ -189,46 +192,46 @@ func (m *Manager) readLoop(conn *websocket.Conn) {
 	}
 }
 
-func (m *Manager) writeCandle(candle Candle) {
+func (m *Manager) writeCandle(candle models.Candle) {
 	safeMarketPriceResources := m.safeGetMarketPriceResources()
 	safeTraderResources := m.safeGetTraderResources()
 	if _, ok := safeMarketPriceResources[candle.ProductID]; ok {
-		writeToChannelAndBufferLatest(safeMarketPriceResources[candle.ProductID].candleFeed, candle)
-		safeMarketPriceResources[candle.ProductID].candleHistory = append(safeMarketPriceResources[candle.ProductID].candleHistory, candle)
-		if len(safeMarketPriceResources[candle.ProductID].candleHistory) > 50 {
-			safeMarketPriceResources[candle.ProductID].candleHistory = safeMarketPriceResources[candle.ProductID].candleHistory[1:]
+		channel_helper.WriteToChannelAndBufferLatest(safeMarketPriceResources[candle.ProductID].CandleFeed, candle)
+		safeMarketPriceResources[candle.ProductID].CandleHistory = append(safeMarketPriceResources[candle.ProductID].CandleHistory, candle)
+		if len(safeMarketPriceResources[candle.ProductID].CandleHistory) > 50 {
+			safeMarketPriceResources[candle.ProductID].CandleHistory = safeMarketPriceResources[candle.ProductID].CandleHistory[1:]
 		}
 	} else {
 		log.Printf("writeCandle: %s not found in marketPriceResources", candle.ProductID)
 	}
 	if _, ok := safeTraderResources[candle.ProductID]; ok {
-		writeToChannelAndBufferLatest(safeTraderResources[candle.ProductID].candleFeed, candle)
+		channel_helper.WriteToChannelAndBufferLatest(safeTraderResources[candle.ProductID].CandleFeedToSignalEngine, candle)
 	} else {
 		log.Printf("writeCandle: %s not found in traderResources", candle.ProductID)
 	}
 }
 
-func (m *Manager) writePrice(ticker Ticker) {
+func (m *Manager) writePrice(ticker models.Ticker) {
 	safeMarketPriceResources := m.safeGetMarketPriceResources()
 	safeTraderResources := m.safeGetTraderResources()
 	if _, ok := safeMarketPriceResources[ticker.ProductID]; ok {
-		writeToChannelAndBufferLatest(safeMarketPriceResources[ticker.ProductID].priceFeed, ticker)
-		safeMarketPriceResources[ticker.ProductID].priceHistory = append(safeMarketPriceResources[ticker.ProductID].priceHistory, ticker)
-		if len(safeMarketPriceResources[ticker.ProductID].priceHistory) > 50 {
-			safeMarketPriceResources[ticker.ProductID].priceHistory = safeMarketPriceResources[ticker.ProductID].priceHistory[1:]
+		channel_helper.WriteToChannelAndBufferLatest(safeMarketPriceResources[ticker.ProductID].PriceFeed, ticker)
+		safeMarketPriceResources[ticker.ProductID].PriceHistory = append(safeMarketPriceResources[ticker.ProductID].PriceHistory, ticker)
+		if len(safeMarketPriceResources[ticker.ProductID].PriceHistory) > 50 {
+			safeMarketPriceResources[ticker.ProductID].PriceHistory = safeMarketPriceResources[ticker.ProductID].PriceHistory[1:]
 		}
 	} else {
 		log.Printf("writePrice: %s not found in marketPriceResources", ticker.ProductID)
 	}
 	if _, ok := safeTraderResources[ticker.ProductID]; ok {
-		writeToChannelAndBufferLatest(safeTraderResources[ticker.ProductID].priceFeedToSignalEngine, ticker)
-		writeToChannelAndBufferLatest(safeTraderResources[ticker.ProductID].priceFeedToTrader, ticker)
+		channel_helper.WriteToChannelAndBufferLatest(safeTraderResources[ticker.ProductID].PriceFeedToSignalEngine, ticker)
+		channel_helper.WriteToChannelAndBufferLatest(safeTraderResources[ticker.ProductID].PriceFeedToTrader, ticker)
 	} else {
 		log.Printf("writePrice: %s not found in traderResources", ticker.ProductID)
 	}
 }
 
-func pingLoop(conn *websocket.Conn, ctx context.Context) {
+func PingLoop(conn *websocket.Conn, ctx context.Context) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	for {
@@ -247,7 +250,7 @@ func pingLoop(conn *websocket.Conn, ctx context.Context) {
 
 func (m *Manager) subscribeToMarketDataForAllTokens(conn *websocket.Conn) {
 	// Subscription json to the two channels we need, for all products in the "tokens" array
-	subPayload := GetMarketSubscriptionPayload(tokens)
+	subPayload := coinbase.GetMarketSubscriptionPayload(m.tokens)
 	for _, p := range subPayload {
 		if err := m.marketDataWS.WriteJSON(p); err != nil {
 			log.Printf("Failed to send subscription: %v", err)
@@ -256,13 +259,13 @@ func (m *Manager) subscribeToMarketDataForAllTokens(conn *websocket.Conn) {
 }
 
 func (m *Manager) subscribeToNewToken(symbol string) {
-	marketDataSubPayload := GetMarketSubscriptionPayload([]string{symbol})
+	marketDataSubPayload := coinbase.GetMarketSubscriptionPayload([]string{symbol})
 	for _, p := range marketDataSubPayload {
 		if err := m.marketDataWS.WriteJSON(p); err != nil {
 			log.Printf("Failed to send subscription: %v", err)
 		}
 	}
-	userDataSubPayload, err := GetUserDataSubscriptionPayload([]string{symbol})
+	userDataSubPayload, err := m.GetUserDataSubscriptionPayload([]string{symbol})
 	if err != nil {
 		log.Printf("failed to get user data subscription payload: %v", err)
 		return
@@ -272,13 +275,12 @@ func (m *Manager) subscribeToNewToken(symbol string) {
 	}
 }
 
-
 type WSMessage struct {
 	Type    string   `json:"type"`
 	Symbols []string `json:"symbols"`
 }
 
-func (m *Manager) wsHandler(w http.ResponseWriter, r *http.Request) {
+func (m *Manager) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	// Check if already connected because we really shouldn't allow more than one ever, not designed for multiple users
 	m.frontendMutex.Lock()
 	if m.frontendConnected {
@@ -325,14 +327,14 @@ func (m *Manager) wsHandler(w http.ResponseWriter, r *http.Request) {
 					}
 					m.subscriptionChannel <- symbol
 					safeMarketPriceResources := m.safeGetMarketPriceResources()
-					for _, data := range safeMarketPriceResources[symbol].priceHistory {
-						msg := getFrontEndTicker(data)
+					for _, data := range safeMarketPriceResources[symbol].PriceHistory {
+						msg := models.GetFrontEndTicker(data)
 						if err := conn.WriteJSON(msg); err != nil {
 							log.Printf("[WS] write error: %v", err)
 						}
 					}
-					for _, data := range safeMarketPriceResources[symbol].candleHistory {
-						msg := getFrontEndCandle(data)
+					for _, data := range safeMarketPriceResources[symbol].CandleHistory {
+						msg := models.GetFrontEndCandle(data)
 						if err := conn.WriteJSON(msg); err != nil {
 							log.Printf("[WS] write error: %v", err)
 						}
@@ -371,31 +373,31 @@ func (m *Manager) wsHandler(w http.ResponseWriter, r *http.Request) {
 			// Send price data for subscribed symbols
 			for _, resource := range safeMarketPriceResources {
 				select {
-				case ticker := <-resource.priceFeed:
-					msg := getFrontEndTicker(ticker)
+				case ticker := <-resource.PriceFeed:
+					msg := models.GetFrontEndTicker(ticker)
 					if err := conn.WriteJSON(msg); err != nil {
 						log.Printf("[WS] write error: %v", err)
 					}
-				case candle := <-resource.candleFeed:
-					msg := getFrontEndCandle(candle)
+				case candle := <-resource.CandleFeed:
+					msg := models.GetFrontEndCandle(candle)
 					if err := conn.WriteJSON(msg); err != nil {
 						log.Printf("[WS] write error: %v", err)
 					}
-				case ord := <-resource.orderFeed:
+				case ord := <-resource.OrderFeed:
 					if err := conn.WriteJSON(ord); err != nil {
 						log.Printf("[WS] write error: %v", err)
 					}
 				default:
 				}
 			}
-			
+
 			// Small sleep to prevent busy loop
 			time.Sleep(250 * time.Millisecond)
 		}
 	}
 }
 
-func (m *Manager) startOrderAndPositionValuationWebSocket(ctx context.Context, wsURL string) {
+func (m *Manager) StartOrderAndPositionValuationWebSocket(ctx context.Context, wsURL string) {
 	go m.runUserWebSocket(ctx, wsURL)
 }
 
@@ -409,7 +411,7 @@ func (m *Manager) runUserWebSocket(ctx context.Context, wsURL string) {
 		}
 
 		// Dial with JWT auth header
-		conn, resp, err := dialWebSocketWithAuth(ctx, wsURL)
+		conn, resp, err := DialWebSocketWithAuth(ctx, wsURL, m.apiKey, m.apiSecret)
 		if err != nil {
 			if resp != nil {
 				log.Printf("user websocket dial failed, status=%d: %v", resp.StatusCode, err)
@@ -445,7 +447,7 @@ func (m *Manager) runUserWebSocket(ctx context.Context, wsURL string) {
 			m.readUserLoop(conn)
 		}()
 
-		go pingLoop(conn, ctx)
+		go PingLoop(conn, ctx)
 
 		select {
 		case <-ctx.Done():
@@ -464,16 +466,16 @@ func (m *Manager) runUserWebSocket(ctx context.Context, wsURL string) {
 }
 
 func (m *Manager) sendUserSubscriptions(conn *websocket.Conn) error {
-	sub, err := GetUserDataSubscriptionPayload(tokens)
+	sub, err := m.GetUserDataSubscriptionPayload(m.tokens)
 	if err != nil {
 		return err
 	}
 	return conn.WriteJSON(sub)
 }
 
-func GetUserDataSubscriptionPayload(tokens []string) (map[string]any, error) {
+func (m *Manager) GetUserDataSubscriptionPayload(tokens []string) (map[string]any, error) {
 	// Subscribe once to unified "user" channel for all products, include jwt in payload
-	jwt, err := buildJWT(apiKey, apiSecret)
+	jwt, err := coinbase.BuildJWT(m.apiKey, m.apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +487,6 @@ func GetUserDataSubscriptionPayload(tokens []string) (map[string]any, error) {
 		"jwt":         jwt,
 	}, nil
 }
-
 
 func (m *Manager) readUserLoop(conn *websocket.Conn) {
 	for {
@@ -505,23 +506,23 @@ func (m *Manager) readUserLoop(conn *websocket.Conn) {
 		}
 		for _, ev := range msg.Events {
 			for _, o := range ev.Orders {
-				update := o.toOrderUpdate()
+				update := o.ToOrderUpdate()
 				m.routeOrderUpdate(update)
 			}
 		}
 	}
 }
 
-func (m *Manager) routeOrderUpdate(up OrderUpdate) {
+func (m *Manager) routeOrderUpdate(up coinbase.OrderUpdate) {
 	safeMarketPriceResources := m.safeGetMarketPriceResources()
 	safeTraderResources := m.safeGetTraderResources()
 	if _, ok := safeMarketPriceResources[up.ProductID]; ok {
-		writeToChannelAndBufferLatest(safeMarketPriceResources[up.ProductID].orderFeed, up)
+		channel_helper.WriteToChannelAndBufferLatest(safeMarketPriceResources[up.ProductID].OrderFeed, up)
 	} else {
 		log.Printf("routeOrderUpdate: %s not found in marketPriceResources", up.ProductID)
 	}
 	if _, ok := safeTraderResources[up.ProductID]; ok {
-		writeToChannelAndBufferLatest(safeTraderResources[up.ProductID].orderFeed, up)
+		channel_helper.WriteToChannelAndBufferLatest(safeTraderResources[up.ProductID].OrderFeed, up)
 	} else {
 		log.Printf("routeOrderUpdate: %s not found in traderResources", up.ProductID)
 	}

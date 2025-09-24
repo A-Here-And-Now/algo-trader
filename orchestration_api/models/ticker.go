@@ -1,4 +1,4 @@
-package main
+package models
 
 import "time"
 
@@ -30,13 +30,13 @@ type Ticker struct {
 }
 
 type FrontEndTicker struct {
-	Type   string 	 `json:"type"`
-	Symbol string 	 `json:"symbol"`
-	Price  string 	 `json:"price"`
+	Type   string    `json:"type"`
+	Symbol string    `json:"symbol"`
+	Price  string    `json:"price"`
 	Time   time.Time `json:"time"`
 }
 
-func getFrontEndTicker(ticker Ticker) FrontEndTicker {
+func GetFrontEndTicker(ticker Ticker) FrontEndTicker {
 	return FrontEndTicker{
 		Type:   ticker.Type,
 		Symbol: ticker.ProductID,

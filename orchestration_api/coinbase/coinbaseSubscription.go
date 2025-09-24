@@ -1,4 +1,4 @@
-package main
+package coinbase
 
 type CoinbaseSubscription struct {
 	Type       string   `json:"type"`

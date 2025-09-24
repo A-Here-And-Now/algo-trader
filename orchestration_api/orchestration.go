@@ -11,25 +11,28 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/entities/manager"
 )
 
 var (
-	apiKey        = "YOUR_API_KEY"
-	privateKeyPem = "PRIVATE_KEY_PEM"
-	apiSecret     = "API_SECRET"
+	apiKey        = os.Getenv("COINBASE_API_KEY")
+	// privateKeyPem = os.Getenv("PRIVATE_KEY_PEM")
+	apiSecret     = os.Getenv("COINBASE_API_SECRET")
 )
 var tokens = []string{"ETH-USD", "WBTC-USD", "LINK-USD", "UNI-USD", "AAVE-USD", "DOT-USD", "ENA-USD", "MNT-USD", "OKB-USD", "POL-USD"}
 var tokenToggles = make(map[string]bool)
 
 var availableFunds = 50000.0
-var mgr *Manager
-var coinbaseClient *CoinbaseClient
+var mgr *manager.Manager
+
 type ctxKey struct{}
 
 var loggerKey = ctxKey{}
 
 // ---------- HANDLERS ----------
-func toggleTokenHandler(w http.ResponseWriter, r *http.Request) {
+func ToggleTokenHandler(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if _, ok := tokenToggles[token]; !ok {
 		http.Error(w, "token not found", http.StatusNotFound)
@@ -64,16 +67,13 @@ func toggleTokenHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func updateTradingStrategyHandler(w http.ResponseWriter, r *http.Request) {
+func UpdateTradingStrategyHandler(w http.ResponseWriter, r *http.Request) {
 	str := r.URL.Query().Get("strategy")
-	strategy := GetStrategy(str)
+	strategy := enum.GetStrategy(str)
 	log := LoggerFrom(r)
-	log.Printf("Updating trading philosophy from %s to %s", mgr.Cfg.strategy, strategy)
+	log.Printf("Updating trading philosophy from %s to %s", mgr.GetStrategy(), strategy)
 
-	mgr.updateStrategy(strategy)
-	for _, trader := range mgr.safeGetTraderResources() {
-		trader.cfg.Strategy = strategy
-	}
+	mgr.UpdateStrategy(strategy)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -82,7 +82,7 @@ func updateTradingStrategyHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func updateMaxPLHandler(w http.ResponseWriter, r *http.Request) {
+func UpdateMaxPLHandler(w http.ResponseWriter, r *http.Request) {
 	maxPL := r.URL.Query().Get("maxPL")
 	maxPLInt, err := strconv.ParseInt(maxPL, 10, 64)
 
@@ -91,38 +91,26 @@ func updateMaxPLHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mgr.updates <- ManagerCfg{
-		maxPL:    maxPLInt,
-		strategy: mgr.Cfg.strategy,
-		funds:    mgr.Cfg.funds,
-	}
+	mgr.UpdateMaxPL(maxPLInt)
 }
 
-func updateStrategyHandler(w http.ResponseWriter, r *http.Request) {
-	mgr.updateStrategy(GetStrategy(r.URL.Query().Get("strategy")))
+func UpdateStrategyHandler(w http.ResponseWriter, r *http.Request) {
+	mgr.UpdateStrategy(enum.GetStrategy(r.URL.Query().Get("strategy")))
 }
 
-func priceHistoryHandler(w http.ResponseWriter, r *http.Request) {
-	allPriceHistory := make(map[string][]Ticker)
-	for symbol, resource := range mgr.marketPriceResources {
-		allPriceHistory[symbol] = resource.priceHistory
-	}
-	json.NewEncoder(w).Encode(allPriceHistory)
+func PriceHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(mgr.GetAllPriceHistory())
 }
 
-func candleHistoryHandler(w http.ResponseWriter, r *http.Request) {
-	allCandleHistory := make(map[string][]Candle)
-	for symbol, resource := range mgr.marketPriceResources {
-		allCandleHistory[symbol] = resource.candleHistory
-	}
-	json.NewEncoder(w).Encode(allCandleHistory)
+func CandleHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(mgr.GetAllCandleHistory())
 }
 
 // ---------- MAIN ----------
 func main() {
 	// Logger
 
-	l, err := newLogger()
+	l, err := NewLogger()
 	if err != nil {
 		log.Printf("⚠️ Could not open log file, falling back to stdout: %v", err)
 		l = &logger{log.New(os.Stdout, "", log.LstdFlags)}
@@ -137,7 +125,7 @@ func main() {
 	shutdownCtx, shutdown := context.WithCancel(context.Background())
 
 	// propagate manager lifecycle context so we can skip reallocations during shutdown
-	mgr = NewManager(availableFunds, 1000, TrendFollowing, shutdownCtx)
+	mgr = manager.NewManager(availableFunds, 1000, enum.TrendFollowing, shutdownCtx, apiKey, apiSecret, tokens)
 
 	// listen to OS signals
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -149,16 +137,16 @@ func main() {
 
 	// mux
 	mux := http.NewServeMux()
-	mux.HandleFunc("/toggleToken", toggleTokenHandler)
-	mux.HandleFunc("/updateTradingPhilosophy", updateTradingStrategyHandler)
-	mux.HandleFunc("/updateMaxPL", updateMaxPLHandler)
-	mux.HandleFunc("/updateStrategy", updateStrategyHandler)
-	mux.HandleFunc("/ws", mgr.wsHandler) // note: `mgr` is a *value* of type *Manager
-	mux.HandleFunc("/priceHistory", priceHistoryHandler)
-	mux.HandleFunc("/candleHistory", candleHistoryHandler)
+	mux.HandleFunc("/toggleToken", ToggleTokenHandler)
+	mux.HandleFunc("/updateTradingPhilosophy", UpdateTradingStrategyHandler)
+	mux.HandleFunc("/updateMaxPL", UpdateMaxPLHandler)
+	mux.HandleFunc("/updateStrategy", UpdateStrategyHandler)
+	mux.HandleFunc("/ws", mgr.WebSocketHandler) // note: `mgr` is a *value* of type *Manager
+	mux.HandleFunc("/priceHistory", PriceHistoryHandler)
+	mux.HandleFunc("/candleHistory", CandleHistoryHandler)
 
 	// wrap with logging
-	handler := loggingMiddleware(mux, l)
+	handler := LoggingMiddleware(mux, l)
 
 	// server
 	srv := &http.Server{
@@ -175,10 +163,9 @@ func main() {
 		}
 	}()
 
-	mgr.refreshTokenBalances()
-	mgr.startCoinbaseFeed(shutdownCtx, "wss://advanced-trade-ws.coinbase.com")
-	mgr.startOrderAndPositionValuationWebSocket(shutdownCtx, "wss://advanced-trade-ws-user.coinbase.com")
-	coinbaseClient = NewCoinbaseClient(os.Getenv("COINBASE_URL"))
+	mgr.RefreshTokenBalances()
+	mgr.StartCoinbaseFeed(shutdownCtx, "wss://advanced-trade-ws.coinbase.com")
+	mgr.StartOrderAndPositionValuationWebSocket(shutdownCtx, "wss://advanced-trade-ws-user.coinbase.com")
 
 	// wait for shutdown signal
 	<-shutdownCtx.Done()

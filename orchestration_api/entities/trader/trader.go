@@ -1,36 +1,32 @@
 // trader.go
-package main
+package trader
 
 import (
 	"context"
 	"log"
 	"strconv"
 	"time"
-)
 
-// TradeCfg contains whatever parameters your algorithm needs.
-// Keep it small for the example – you can expand it as you wish.
-type TradeCfg struct {
-	Symbol         string   `json:"symbol"`   // e.g. "BTCUSD"
-	AllocatedFunds float64  `json:"size"`     // position size
-	Strategy       Strategy `json:"strategy"` // trading strategy
-}
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
+)
 
 type Trader struct {
 	cfg                         TradeCfg
 	ctx                         context.Context
 	cancel                      context.CancelFunc
 	updates                     chan TradeCfg
-	signalCh                    chan Signal
+	signalCh                    chan enum.Signal
 	actualPositionToken         float64
 	actualPositionUSD           float64 // actual position in USD
 	usdAmountPerFulfilledOrders float64 // actual position in USD without gains or losses
 	targetPositionUSD           float64 // target position in USD
-	orderFeed                   chan OrderUpdate
-	pendingOrder                *PendingOrder
+	orderFeed                   chan coinbase.OrderUpdate
+	pendingOrder                *models.PendingOrder
 	currentPriceUSDPerToken     float64
-	priceFeed                   chan Ticker
-	coinbaseClient              *CoinbaseClient
+	priceFeed                   chan models.Ticker
+	CoinbaseClient              *coinbase.CoinbaseClient
 }
 
 func (t *Trader) getTargetPositionPct() float64 {
@@ -42,7 +38,7 @@ func (t *Trader) getActualPositionPct() float64 {
 }
 
 // NewTrader builds a trader instance from a config.
-func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, updates chan TradeCfg, signalCh chan Signal, orderFeed chan OrderUpdate, startingTokenBalance float64) *Trader {
+func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, updates chan TradeCfg, signalCh chan enum.Signal, orderFeed chan coinbase.OrderUpdate, startingTokenBalance float64) *Trader {
 	return &Trader{cfg: cfg, ctx: ctx, cancel: cancel, updates: updates, signalCh: signalCh, orderFeed: orderFeed, actualPositionToken: startingTokenBalance}
 }
 
@@ -74,7 +70,7 @@ func (t *Trader) Run() {
 	}
 }
 
-func (t *Trader) handlePriceUpdate(price Ticker) {
+func (t *Trader) handlePriceUpdate(price models.Ticker) {
 	t.currentPriceUSDPerToken, _ = strconv.ParseFloat(price.Price, 64)
 	t.actualPositionUSD = t.actualPositionToken * t.currentPriceUSDPerToken
 	if (t.usdAmountPerFulfilledOrders == 0) { // with this, the current logic can know about the pre-existing position and adjust accordingly
@@ -94,20 +90,20 @@ func (t *Trader) adjustTargetPositionAccordingToAllocatedFundsUpdate(update Trad
 }
 
 // handleSignal executes buy/sell respecting rules on allocated funds and bounds 0..100
-func (t *Trader) handleSignal(s Signal) {
+func (t *Trader) handleSignal(s enum.Signal) {
 	log.Printf("[Trader %s] Signal received: Percent=%v Type=%s", t.cfg.Symbol, s.Percent, s.Type)
 	if s.Percent <= 0 {
 		return
 	}
 	pct := s.Percent
 	switch s.Type {
-	case SignalBuy:
+	case enum.SignalBuy:
 		// Buy percent pertains to allocated funds but cannot exceed 100% target
 		t.targetPositionUSD += pct * t.cfg.AllocatedFunds / 100.0
 		if t.targetPositionUSD > t.cfg.AllocatedFunds {
 			t.targetPositionUSD = t.cfg.AllocatedFunds
 		}
-	case SignalSell:
+	case enum.SignalSell:
 		// Sell percent pertains to position if position > 100, else allocated funds percent
 		targetPct := t.getTargetPositionPct()
 		actualPct := t.getActualPositionPct()
@@ -123,7 +119,7 @@ func (t *Trader) handleSignal(s Signal) {
 	}
 }
 
-func (t *Trader) handleOrderUpdate(up OrderUpdate) {
+func (t *Trader) handleOrderUpdate(up coinbase.OrderUpdate) {
 	if t.pendingOrder != nil {
 		if t.pendingOrder.OrderID == up.OrderID && up.Status == "FILLED" {
 			leaves, _ := strconv.ParseFloat(up.Leaves, 64)
@@ -188,7 +184,7 @@ func (t *Trader) cancelPendingOrderWithTimeout() error {
 
     orderID := t.pendingOrder.OrderID
     err := t.executeWithTimeout(10, "Cancel order", func(ctx context.Context) error {
-        return t.coinbaseClient.CancelOrders(ctx, orderID)
+        return t.CoinbaseClient.CancelOrders(ctx, orderID)
     })
 
     if err == nil {
@@ -207,7 +203,7 @@ func (t *Trader) sellTokensWithTimeout() error {
     symbol := t.cfg.Symbol
     amount := t.actualPositionToken
     err := t.executeWithTimeout(10, "Sell tokens", func(ctx context.Context) error {
-        _, err := t.coinbaseClient.SellTokens(symbol, amount)
+        _, err := t.CoinbaseClient.SellTokens(symbol, amount)
         return err
     })
 
@@ -222,9 +218,9 @@ func (t *Trader) getTotalPositionAsFulfilledOrdersPlusPending() float64 {
 	total := t.usdAmountPerFulfilledOrders
 	if t.hasPendingOrder() {
 		switch t.pendingOrder.OrderType {
-		case SignalBuy:
+		case enum.SignalBuy:
 			total += t.pendingOrder.CurrentAmountLeftToBeFilledInUSD
-		case SignalSell:
+		case enum.SignalSell:
 			total -= t.pendingOrder.CurrentAmountLeftToBeFilledInUSD
 		}
 	}
@@ -232,23 +228,23 @@ func (t *Trader) getTotalPositionAsFulfilledOrdersPlusPending() float64 {
 }
 
 func (t *Trader) submitBuyToCoinbase(amount float64) error {
-	response, err := t.coinbaseClient.CreateOrder(t.ctx, t.cfg.Symbol, amount, true)
+	response, err := t.CoinbaseClient.CreateOrder(t.ctx, t.cfg.Symbol, amount, true)
 	if err != nil {
 		log.Printf("failed to submit buy to coinbase: %v", err)
 		return err
 	}
 	log.Printf("submitted buy to coinbase: %v", response)
-	t.pendingOrder = t.getPendingOrderFromResponse(response, SignalBuy, amount)
+	t.setPendingOrder(t.getPendingOrderFromResponse(response, enum.SignalBuy, amount))
 	return nil
 }
 
 func (t *Trader) submitSellToCoinbase(amount float64) error {
-	response, err := t.coinbaseClient.CreateOrder(t.ctx, t.cfg.Symbol, amount, true)
+	response, err := t.CoinbaseClient.CreateOrder(t.ctx, t.cfg.Symbol, amount, true)
 	if err != nil {
 		log.Printf("failed to submit buy to coinbase: %v", err)
 		return err
 	}
 	log.Printf("submitted buy to coinbase: %v", response)
-	t.pendingOrder = t.getPendingOrderFromResponse(response, SignalBuy, amount)
+	t.setPendingOrder(t.getPendingOrderFromResponse(response, enum.SignalBuy, amount))
 	return nil
 }

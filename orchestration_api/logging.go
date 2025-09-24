@@ -26,7 +26,7 @@ type logger struct {
 	*log.Logger
 }
 
-func newLogger() (*logger, error) {
+func NewLogger() (*logger, error) {
 	date := time.Now().Format("2006-01-02")
 	filename := fmt.Sprintf("logs/app_log_%s.log", date)
 	dir := filepath.Dir(filename)
@@ -40,7 +40,7 @@ func newLogger() (*logger, error) {
 	return &logger{log.New(f, "", log.LstdFlags)}, nil
 }
 
-func loggingMiddleware(next http.Handler, log *logger) http.Handler {
+func LoggingMiddleware(next http.Handler, log *logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		r = WithLogger(r, log.Logger)

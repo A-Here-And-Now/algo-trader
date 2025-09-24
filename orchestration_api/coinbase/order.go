@@ -1,4 +1,4 @@
-package main
+package coinbase
 
 import "time"
 
@@ -16,7 +16,7 @@ type OrderUpdate struct {
 	Ts        	time.Time `json:"ts"`
 }
 
-func (o Order) toOrderUpdate() OrderUpdate {
+func (o Order) ToOrderUpdate() OrderUpdate {
 	return OrderUpdate{
 		Channel:     "orders",
 		ProductID:   o.ProductID,
