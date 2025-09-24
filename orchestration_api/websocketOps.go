@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -11,23 +12,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type Order struct {
-	AvgPrice           string `json:"avg_price"`
-	ClientOrderID      string `json:"client_order_id"`
-	CumulativeQuantity string `json:"cumulative_quantity"`
-	FilledValue        string `json:"filled_value"`
-	OrderID            string `json:"order_id"`
-	OrderSide          string `json:"order_side"`
-	OrderType          string `json:"order_type"`
-	ProductID          string `json:"product_id"`
-	Status             string `json:"status"`
-	LimitPrice         string `json:"limit_price"`
-	CreationTime       string `json:"creation_time"`
-}
-
-// (Positions removed; we only care about order updates here)
-
-// UserChannelMessage represents the Coinbase Advanced Trade "user" channel payload
 type UserChannelMessage struct {
 	Channel string `json:"channel"`
 	Events  []struct {
@@ -36,12 +20,35 @@ type UserChannelMessage struct {
 	} `json:"events"`
 }
 
+// dialWebSocket connects with the JWT included in the HTTP headers for the WebSocket handshake.
+func dialWebSocketWithAuth(ctx context.Context, wsURL string) (*websocket.Conn, *http.Response, error) {
+	jwtTok, err := buildJWT(apiKey, apiSecret)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build jwt: %w", err)
+	}
+
+	headers := http.Header{}
+	// Most APIs accept an Authorization: Bearer <token> header at handshake time.
+	headers.Set("Authorization", "Bearer "+jwtTok)
+
+	// Some APIs expect the token as a query param or Sec-WebSocket-Protocol — check docs.
+	// headers.Set("Sec-WebSocket-Protocol", "jwt."+jwtTok)
+
+	d := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		// TLS / proxy / config options here (InsecureSkipVerify etc) if needed.
+	}
+
+	// DialContext will respect ctx cancelation.
+	conn, resp, err := d.DialContext(ctx, wsURL, headers)
+	return conn, resp, err
+}
+
 func (m *Manager) startCoinbaseFeed(ctx context.Context, cbAdvUrl string) {
 	u, _ := url.Parse(cbAdvUrl)
 	go m.runMarketDataWebSocket(ctx, u.String())
 }
 
-// runWebSocket manages the lifecycle: connect, read messages, reconnect with backoff if needed.
 func (m *Manager) runMarketDataWebSocket(ctx context.Context, wsURL string) {
 	backoff := 1 * time.Second
 	for {
@@ -128,7 +135,6 @@ func (m *Manager) runMarketDataWebSocket(ctx context.Context, wsURL string) {
 	}
 }
 
-// readLoop reads messages from the websocket and processes them.
 func (m *Manager) readLoop(conn *websocket.Conn) {
 	for {
 		// Read a raw JSON message
@@ -215,14 +221,13 @@ func (m *Manager) writePrice(ticker Ticker) {
 		log.Printf("writePrice: %s not found in marketPriceResources", ticker.ProductID)
 	}
 	if _, ok := safeTraderResources[ticker.ProductID]; ok {
-		writeToChannelAndBufferLatest(safeTraderResources[ticker.ProductID].priceFeed, ticker)
+		writeToChannelAndBufferLatest(safeTraderResources[ticker.ProductID].priceFeedToSignalEngine, ticker)
+		writeToChannelAndBufferLatest(safeTraderResources[ticker.ProductID].priceFeedToTrader, ticker)
 	} else {
 		log.Printf("writePrice: %s not found in traderResources", ticker.ProductID)
 	}
 }
 
-// pingLoop optionally sends regular pings to keep the connection alive.
-// Some providers send pings themselves, or expect pongs; check your provider's docs.
 func pingLoop(conn *websocket.Conn, ctx context.Context) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
@@ -365,62 +370,31 @@ func (m *Manager) wsHandler(w http.ResponseWriter, r *http.Request) {
 
 			// Send price data for subscribed symbols
 			for _, resource := range safeMarketPriceResources {
-				for {
-					select {
-					case ticker := <-resource.priceFeed:
-						msg := getFrontEndTicker(ticker)
-						if err := conn.WriteJSON(msg); err != nil {
-							log.Printf("[WS] write error: %v", err)
-						}
-					case candle := <-resource.candleFeed:
-						msg := getFrontEndCandle(candle)
-						if err := conn.WriteJSON(msg); err != nil {
-							log.Printf("[WS] write error: %v", err)
-						}
-					case ord := <-resource.orderFeed:
-						if err := conn.WriteJSON(ord); err != nil {
-							log.Printf("[WS] write error: %v", err)
-						}
-					default:
-						break // No price/candle data available, continue
+				select {
+				case ticker := <-resource.priceFeed:
+					msg := getFrontEndTicker(ticker)
+					if err := conn.WriteJSON(msg); err != nil {
+						log.Printf("[WS] write error: %v", err)
 					}
+				case candle := <-resource.candleFeed:
+					msg := getFrontEndCandle(candle)
+					if err := conn.WriteJSON(msg); err != nil {
+						log.Printf("[WS] write error: %v", err)
+					}
+				case ord := <-resource.orderFeed:
+					if err := conn.WriteJSON(ord); err != nil {
+						log.Printf("[WS] write error: %v", err)
+					}
+				default:
 				}
 			}
+			
 			// Small sleep to prevent busy loop
-			time.Sleep(15 * time.Millisecond)
+			time.Sleep(250 * time.Millisecond)
 		}
 	}
 }
 
-// ======================
-// User-authenticated WS for orders and positions
-// ======================
-
-type OrderUpdate struct {
-	Channel   string    `json:"channel"` // e.g., "orders"
-	ProductID string    `json:"product_id"`
-	OrderID   string    `json:"order_id"`
-	Status    string    `json:"status"` // open, filled, cancelled, etc.
-	FilledQty string    `json:"filled_qty"`
-	Price     string    `json:"price"`
-	Side      string    `json:"side"`
-	Ts        time.Time `json:"ts"`
-}
-
-func (o Order) toOrderUpdate() OrderUpdate {
-	return OrderUpdate{
-		Channel:   "orders",
-		ProductID: o.ProductID,
-		OrderID:   o.OrderID,
-		Status:    o.Status,
-		FilledQty: o.CumulativeQuantity,
-		Price:     chooseNonEmpty(o.LimitPrice, o.AvgPrice),
-		Side:      o.OrderSide,
-		Ts:        time.Now(),
-	}
-}
-
-// startOrderAndPositionValuationWebSocket connects to the user websocket and subscribes with JWT
 func (m *Manager) startOrderAndPositionValuationWebSocket(ctx context.Context, wsURL string) {
 	go m.runUserWebSocket(ctx, wsURL)
 }
@@ -536,13 +510,6 @@ func (m *Manager) readUserLoop(conn *websocket.Conn) {
 			}
 		}
 	}
-}
-
-func chooseNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }
 
 func (m *Manager) routeOrderUpdate(up OrderUpdate) {

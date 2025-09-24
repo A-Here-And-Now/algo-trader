@@ -4,7 +4,8 @@ import "context"
 
 type TraderResource struct {
 	signalChan   chan Signal
-	priceFeed    chan Ticker
+	priceFeedToSignalEngine    chan Ticker
+	priceFeedToTrader    chan Ticker
 	candleFeed   chan Candle
 	orderFeed    chan OrderUpdate
 	client       *CoinbaseClient
@@ -19,7 +20,8 @@ type TraderResource struct {
 func NewTraderResource(cfg TradeCfg, done chan struct{}, cancel context.CancelFunc, updates chan TradeCfg) *TraderResource {
 	return &TraderResource{
 		signalChan:   make(chan Signal),
-		priceFeed:    make(chan Ticker),
+		priceFeedToSignalEngine:    make(chan Ticker),
+		priceFeedToTrader:    make(chan Ticker),
 		candleFeed:   make(chan Candle),
 		orderFeed:    make(chan OrderUpdate, 64),
 		cancel:       cancel,
@@ -32,7 +34,8 @@ func NewTraderResource(cfg TradeCfg, done chan struct{}, cancel context.CancelFu
 func (t *TraderResource) Stop() {
 	t.cancel()
 	close(t.signalChan)
-	close(t.priceFeed)
+	close(t.priceFeedToSignalEngine)
+	close(t.priceFeedToTrader)
 	close(t.candleFeed)
 	close(t.orderFeed)
 }

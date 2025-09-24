@@ -110,19 +110,23 @@ type CreateOrderRequest struct {
 	SORPreference              string              `json:"sor_preference,omitempty"`
 }
 
-func GetOrderRequest(symbol string, amountOfUSD float64, isBuy bool) CreateOrderRequest {
+func GetOrderRequest(symbol string, amount float64, isBuy bool, isSellTokensRequest bool) CreateOrderRequest {
 	side := "SELL"
 	if isBuy {
 		side = "BUY"
 	}
-	return CreateOrderRequest{
+	orderReq := CreateOrderRequest{
 		ClientOrderID: uuid.New().String(),
 		ProductID: symbol,
 		Side: side,
 		OrderConfiguration: OrderConfiguration{
-			MarketMarketIOC: &MarketMarketIOC{
-				QuoteSize: fmt.Sprintf("%f", amountOfUSD),
-			},
+			MarketMarketIOC: &MarketMarketIOC{ },
 		},
 	}
+	if isSellTokensRequest {
+		orderReq.OrderConfiguration.MarketMarketIOC.BaseSize = fmt.Sprintf("%f", amount)
+	} else {
+		orderReq.OrderConfiguration.MarketMarketIOC.QuoteSize = fmt.Sprintf("%f", amount)
+	}
+	return orderReq
 }

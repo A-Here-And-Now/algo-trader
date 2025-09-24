@@ -14,7 +14,7 @@ type SignalingResource struct {
 func NewSignalingResource(traderResource *TraderResource, priceHistory []Ticker, candleHistory []Candle) *SignalingResource {
 
 	return &SignalingResource{
-		priceFeed:     traderResource.priceFeed,
+		priceFeed:     traderResource.priceFeedToSignalEngine,
 		candleFeed:    traderResource.candleFeed,
 		signalCh:      traderResource.signalChan,
 		priceHistory:  priceHistory,

@@ -175,6 +175,7 @@ func main() {
 		}
 	}()
 
+	mgr.refreshTokenBalances()
 	mgr.startCoinbaseFeed(shutdownCtx, "wss://advanced-trade-ws.coinbase.com")
 	mgr.startOrderAndPositionValuationWebSocket(shutdownCtx, "wss://advanced-trade-ws-user.coinbase.com")
 	coinbaseClient = NewCoinbaseClient(os.Getenv("COINBASE_URL"))

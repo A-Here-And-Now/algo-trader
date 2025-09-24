@@ -12,10 +12,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type ProfitLossUpdate struct {
-	Symbol     string
-	ProfitLoss float64
-}
+// type ProfitLossUpdate struct {
+// 	Symbol     string
+// 	ProfitLoss float64
+// }
 
 // Manager holds a map of active traders keyed by a user‑supplied ID.
 type Manager struct {
@@ -26,16 +26,16 @@ type Manager struct {
 	updates                 chan ManagerCfg
 	marketDataWS            *websocket.Conn
 	userDataWS              *websocket.Conn
-	profitLossUpdates       chan ProfitLossUpdate
-	profitLossTotalForToday float64
-	// added: signal engine and per-token channels
-	engine               *SignalEngine
-	traderResources      map[string]*TraderResource
-	marketPriceResources map[string]*FrontEndResource
-	subscriptionChannel  chan string
-	frontendConnected    bool
-	frontendMutex        sync.Mutex
-	client               *CoinbaseClient
+	// profitLossUpdates    chan ProfitLossUpdate
+	profitLossTotal 		float64
+	engine               	*SignalEngine
+	traderResources      	map[string]*TraderResource
+	marketPriceResources 	map[string]*FrontEndResource
+	subscriptionChannel  	chan string
+	frontendConnected    	bool
+	frontendMutex        	sync.Mutex
+	client               	*CoinbaseClient
+	tokenBalances           map[string]float64
 }
 
 func (m *Manager) safeAddMarketPriceResource(symbol string) {
@@ -108,7 +108,7 @@ func NewManager(funds float64, maxPL int64, strategy Strategy, ctx context.Conte
 		},
 		ctx:                  ctx,
 		updates:              updates,
-		profitLossUpdates:    make(chan ProfitLossUpdate, 256),
+		// profitLossUpdates:    make(chan ProfitLossUpdate, 256),
 		traderResources:      make(map[string]*TraderResource),
 		marketPriceResources: make(map[string]*FrontEndResource),
 		subscriptionChannel:  make(chan string),
@@ -127,8 +127,8 @@ func NewManager(funds float64, maxPL int64, strategy Strategy, ctx context.Conte
 		for {
 			select {
 			case manager.Cfg = <-updates:
-			case profitLossUpdate := <-manager.profitLossUpdates:
-				manager.profitLossTotalForToday += profitLossUpdate.ProfitLoss
+			// case profitLossUpdate := <-manager.profitLossUpdates:
+			// 	manager.profitLossTotalForToday += profitLossUpdate.ProfitLoss
 			case <-manager.ctx.Done():
 				return
 			default:
@@ -194,9 +194,12 @@ func (m *Manager) Start(tokenStr string) error {
 	// register with signal engine
 	m.engine.RegisterToken(tokenStr, m.traderResources[tokenStr], safeMarketPriceResources[tokenStr].priceHistory, safeMarketPriceResources[tokenStr].candleHistory)
 
+	m.refreshTokenBalances()
+
 	// Build the trader and launch it in its own goroutine.
-	newTrader := NewTrader(cfg, ctx, cancel, updates, m.traderResources[tokenStr].signalChan, m.traderResources[tokenStr].orderFeed)
-	newTrader.client = m.client
+	newTrader := NewTrader(cfg, ctx, cancel, updates, m.traderResources[tokenStr].signalChan, m.traderResources[tokenStr].orderFeed, m.tokenBalances[tokenStr])
+	newTrader.coinbaseClient = m.client
+
 	go func() {
 		// Ensure we close the done channel even on panic.
 		defer close(done)
@@ -232,6 +235,7 @@ func (m *Manager) Stop(token string) error {
 			// Reallocate funds if manager context is still active
 			if m.ctx.Err() == nil {
 				m.reallocateFunds()
+
 			}
 		case <-time.After(19 * time.Second):
 			log.Printf("trader %q did not stop within timeout - need to pull active positions from exchange upon restart", tr.cfg.Symbol)
@@ -239,6 +243,14 @@ func (m *Manager) Stop(token string) error {
 	}(t)
 
 	return nil
+}
+
+func (m *Manager) refreshTokenBalances() {
+	balances, err := m.client.GetAllTokenBalances(m.ctx)
+	if err != nil {
+		panic(fmt.Sprintf("failed to get token balances: %v", err))
+	}
+	m.tokenBalances = balances
 }
 
 func (m *Manager) reallocateFunds() {
@@ -273,7 +285,7 @@ func (m *Manager) updateStrategy(strategy Strategy) {
 
 // a function that will call stop all if the profit loss total for today is greater than the maxPL
 func (m *Manager) checkProfitLossTotalForToday() {
-	if m.profitLossTotalForToday > float64(m.Cfg.maxPL) {
+	if m.profitLossTotal > float64(m.Cfg.maxPL) {
 		m.StopAll()
 	}
 }
