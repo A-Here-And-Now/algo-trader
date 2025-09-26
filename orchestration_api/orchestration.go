@@ -12,14 +12,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/entities/manager"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 )
 
 var (
-	apiKey        = os.Getenv("COINBASE_API_KEY")
+	apiKey = os.Getenv("COINBASE_API_KEY")
 	// privateKeyPem = os.Getenv("PRIVATE_KEY_PEM")
-	apiSecret     = os.Getenv("COINBASE_API_SECRET")
+	apiSecret = os.Getenv("COINBASE_API_SECRET")
 )
 var tokens = []string{"ETH-USD", "WBTC-USD", "LINK-USD", "UNI-USD", "AAVE-USD", "DOT-USD", "ENA-USD", "MNT-USD", "OKB-USD", "POL-USD"}
 var tokenToggles = make(map[string]bool)
@@ -125,7 +125,7 @@ func main() {
 	shutdownCtx, shutdown := context.WithCancel(context.Background())
 
 	// propagate manager lifecycle context so we can skip reallocations during shutdown
-	mgr = manager.NewManager(availableFunds, 1000, enum.TrendFollowing, shutdownCtx, apiKey, apiSecret, tokens)
+	mgr = manager.NewManager(availableFunds, 1000, enum.TrendFollowingWithMomentumConfirmation, shutdownCtx, apiKey, apiSecret, tokens)
 
 	// listen to OS signals
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

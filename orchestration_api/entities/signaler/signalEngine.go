@@ -84,7 +84,7 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 		se.mu.RUnlock()
 
 		// drain non-blocking new data
-		for drained := 0; drained < 100; drained++ { // cap to avoid infinite loops
+		for drained := 0; drained < 10; drained++ { // cap to avoid infinite loops
 			select {
 			case tick := <-priceCh:
 				se.appendPrice(symbol, tick)
