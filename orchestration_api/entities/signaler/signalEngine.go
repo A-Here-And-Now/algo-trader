@@ -2,8 +2,7 @@ package signaler
 
 import (
 	"context"
-	"log"
-	"strconv"
+	// "log"
 	"sync"
 	"time"
 
@@ -30,10 +29,10 @@ func NewSignalEngine(parent context.Context) *SignalEngine {
 }
 
 // RegisterToken wires the channels for a token. Manager should create the channels and pass them in.
-func (se *SignalEngine) RegisterToken(symbol string, priceFeed chan models.Ticker, candleFeed chan models.Candle, signalCh chan enum.Signal, priceHistory []models.Ticker, candleHistory []models.Candle) {
+func (se *SignalEngine) RegisterToken(symbol string, priceFeed chan models.Ticker, candleFeed chan models.Candle, signalCh chan enum.Signal, priceHistory []models.Ticker, candleHistory []models.Candle, candleHistory26Days []models.Candle) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	se.signalingResources[symbol] = NewSignalingResource(priceFeed, candleFeed, signalCh, priceHistory, candleHistory)
+	se.signalingResources[symbol] = NewSignalingResource(priceFeed, candleFeed, signalCh, priceHistory, candleHistory, candleHistory26Days)
 }
 
 // UnregisterToken removes channels and state for a token
@@ -93,9 +92,8 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 				se.appendCandle(symbol, c)
 				continue
 			default:
-				// nothing pending
+				break
 			}
-			break
 		}
 
 		se.maybeEmitSignal(symbol)
@@ -118,63 +116,40 @@ func (se *SignalEngine) appendPrice(symbol string, tick models.Ticker) {
 func (se *SignalEngine) appendCandle(symbol string, c models.Candle) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
-	se.signalingResources[symbol].candleHistory = append(se.signalingResources[symbol].candleHistory, c)
-	// keep last 200 candles (~hours depending on interval)
-	buf := se.signalingResources[symbol].candleHistory
-	if len(buf) > 200 {
-		buf = buf[len(buf)-200:]
+	length := len(se.signalingResources[symbol].candleHistory)
+	if (se.signalingResources[symbol].candleHistory[length-1].Start == c.Start) {
+		se.signalingResources[symbol].candleHistory[length-1] = c
+	} else {
+		se.signalingResources[symbol].candleHistory = append(se.signalingResources[symbol].candleHistory, c)
+		if len(se.signalingResources[symbol].candleHistory) > 24 {
+			se.signalingResources[symbol].fiveMinuteCandleCounter++
+			se.signalingResources[symbol].candleHistory = se.signalingResources[symbol].candleHistory[1:]
+			if se.signalingResources[symbol].fiveMinuteCandleCounter >= 24 {
+				se.signalingResources[symbol].fiveMinuteCandleCounter = 0
+				se.signalingResources[symbol].Shift26DayCandleHistory(se.signalingResources[symbol].candleHistory)
+			}
+		}
 	}
-	se.signalingResources[symbol].candleHistory = buf
 }
 
+
+
 func (se *SignalEngine) maybeEmitSignal(symbol string) {
-	se.mu.RLock()
-	lastAt := se.signalingResources[symbol].lastSignalAt
-	prices := se.signalingResources[symbol].priceHistory
-	candles := se.signalingResources[symbol].candleHistory
-	signalCh := se.signalingResources[symbol].signalCh
-	se.mu.RUnlock()
+	// se.mu.RLock()
+	// lastAt := se.signalingResources[symbol].lastSignalAt
+	// prices := se.signalingResources[symbol].priceHistory
+	// candles := se.signalingResources[symbol].candleHistory
+	// signalCh := se.signalingResources[symbol].signalCh
+	// se.mu.RUnlock()
 
-	if signalCh == nil {
-		return
-	}
 
-	if len(prices) == 0 || len(candles) == 0 {
-		return
-	}
-
-	// require at least some data and 60s since last signal
-	if len(prices) < 60 || len(candles) < 5 {
-		return
-	}
-	if !lastAt.IsZero() && time.Since(lastAt) < 60*time.Second {
-		return
-	}
-
-	// Dummy logic: alternate buy/sell 10% based on last close vs last price
-	percent := 10.0
-	stype := enum.SignalBuy
-	lastPriceStr := prices[len(prices)-1].Price
-	lastPrice, err := strconv.ParseFloat(lastPriceStr, 64)
-	if err != nil {
-		return
-	}
-	lastClose := candles[len(candles)-1].Close
-	if lastPrice < lastClose {
-		stype = enum.SignalBuy
-	} else if lastPrice > lastClose {
-		stype = enum.SignalSell
-	} else {
-		return
-	}
-
-	select {
-	case signalCh <- enum.Signal{Symbol: symbol, Type: stype, Percent: percent, Time: time.Now()}:
-		log.Printf("[SignalEngine %s] emitted %s %.2f%%", symbol, stype.String(), percent)
-		se.mu.Lock()
-		se.signalingResources[symbol].lastSignalAt = time.Now()
-		se.mu.Unlock()
-	default:
-		// drop if receiver is slow
-	}
+	// select {
+	// case signalCh <- enum.Signal{Symbol: symbol, Type: stype, Percent: percent, Time: time.Now()}:
+	// 	log.Printf("[SignalEngine %s] emitted %s %.2f%%", symbol, stype.String(), percent)
+	// 	se.mu.Lock()
+	// 	se.signalingResources[symbol].lastSignalAt = time.Now()
+	// 	se.mu.Unlock()
+	// default:
+	// 	// drop if receiver is slow
+	// }
 }

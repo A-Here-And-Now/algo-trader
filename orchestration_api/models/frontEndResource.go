@@ -12,15 +12,17 @@ type FrontEndResource struct {
 	StopCandle    func()
 	PriceHistory  []Ticker
 	CandleHistory []Candle
+	CandleHistory26Days []Candle
 }
 
-func NewFrontEndResource() *FrontEndResource {
+func NewFrontEndResource(candleHistory26Days []Candle) *FrontEndResource {
 	return &FrontEndResource{
 		PriceFeed:     make(chan Ticker),
 		CandleFeed:    make(chan Candle),
 		OrderFeed:     make(chan coinbase.OrderUpdate),
 		PriceHistory:  make([]Ticker, 1),
 		CandleHistory: make([]Candle, 1),
+		CandleHistory26Days: candleHistory26Days,
 	}
 }
 

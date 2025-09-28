@@ -111,10 +111,10 @@ func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.
 	return &manager
 }
 
-func (m *Manager) safeAddMarketPriceResource(symbol string) {
+func (m *Manager) safeAddMarketPriceResource(symbol string, candleHistory26Days []models.Candle) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.marketPriceResources[symbol] = models.NewFrontEndResource()
+	m.marketPriceResources[symbol] = models.NewFrontEndResource(candleHistory26Days)
 }
 
 func (m *Manager) safeRemoveMarketPriceResource(symbol string) {
@@ -208,7 +208,7 @@ func (m *Manager) Start(tokenStr string) error {
 	safeMarketPriceResources := m.safeGetMarketPriceResources()
 	// register with signal engine
 	m.engine.RegisterToken(tokenStr, m.traderResources[tokenStr].PriceFeedToSignalEngine, m.traderResources[tokenStr].CandleFeedToSignalEngine,
-		m.traderResources[tokenStr].SignalChan, safeMarketPriceResources[tokenStr].PriceHistory, safeMarketPriceResources[tokenStr].CandleHistory)
+		m.traderResources[tokenStr].SignalChan, safeMarketPriceResources[tokenStr].PriceHistory, safeMarketPriceResources[tokenStr].CandleHistory, safeMarketPriceResources[tokenStr].CandleHistory26Days)
 
 	m.RefreshTokenBalances()
 

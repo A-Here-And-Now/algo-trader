@@ -14,9 +14,10 @@ const (
 	TrendlineBreakout // https://www.tradingview.com/script/grMQIRAr-Trendline-Breakout-Strategy-KedArc-Quant/ and https://www.tradingview.com/script/4juJumUH-Instant-Breakout-Strategy-with-RSI-VWAP/
 	Supertrend // https://www.tradingview.com/script/r6dAP7yi/ and https://www.tradingview.com/script/Y0KEwo8o-script-algo-orb-strategy-with-filters/
 	GroverLlorensActivator // https://www.tradingview.com/script/VuYM89Tw-Grover-Llorens-Activator-Strategy-Analysis/
-	TurtleTrading // this might not fit with the current model of the trader logic but there's probably a way to emulate most of its logic.... see TurtleTrading.md in the orchestration_api folder
+	// TurtleTrading // this might not fit with the current model of the trader logic but there's probably a way to emulate most of its logic.... see TurtleTrading.md in the orchestration_api folder
 )
 // clean stop loss and trailing stop implementation for reference https://www.tradingview.com/script/4jxYYaGU-Traling-SL-Target/
+
 func (s Strategy) String() string {
 	switch s {
 	case MeanReversion:
@@ -24,7 +25,7 @@ func (s Strategy) String() string {
 	case TrendFollowingWithMomentumConfirmation:
 		return "TrendFollowingWithMomentumConfirmation"
 	case CandlestickSignalAggregation:
-		return "CandlestickAnalysis"
+		return "CandlestickSignalAggregation"
 	default:
 		return ""
 	}

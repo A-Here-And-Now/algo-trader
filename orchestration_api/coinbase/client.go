@@ -29,56 +29,6 @@ type Money struct {
 	Currency string `json:"currency"`
 }
 
-type Account struct {
-	UUID              string `json:"uuid"`
-	Name              string `json:"name"`
-	Currency          string `json:"currency"`
-	AvailableBalance  Money  `json:"available_balance"`
-	Default           bool   `json:"default"`
-	Active            bool   `json:"active"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
-	DeletedAt         string `json:"deleted_at"`
-	Type              string `json:"type"`
-	Ready             bool   `json:"ready"`
-	Hold              Money  `json:"hold"`
-	RetailPortfolioID string `json:"retail_portfolio_id"`
-	Platform          string `json:"platform"`
-}
-
-type AccountsListResponse struct {
-	Accounts []Account `json:"accounts"`
-	HasNext  bool      `json:"has_next"`
-	Cursor   string    `json:"cursor"`
-	Size     int       `json:"size"`
-}
-
-type AccountResponse struct {
-	Account Account `json:"account"`
-}
-
-// ListOrders fetches recent orders
-type ListOrder struct {
-	OrderID            string `json:"order_id"`
-	ProductID          string `json:"product_id"`
-	OrderType          string `json:"order_type"`
-	OrderSide          string `json:"order_side"`
-	Status             string `json:"status"`
-	ClientOrderID      string `json:"client_order_id"`
-	CreatedTime        string `json:"created_time"`
-	CompletionTime     string `json:"completion_time"`
-	Price              string `json:"price"`
-	AverageFilledPrice string `json:"average_filled_price"`
-	FilledSize         string `json:"filled_size"`
-	RemainingSize      string `json:"remaining_size"`
-}
-
-type ListOrdersResponse struct {
-	Orders  []ListOrder `json:"orders"`
-	HasNext bool        `json:"has_next"`
-	Cursor  string      `json:"cursor"`
-}
-
 func NewCoinbaseClient(baseURL string, apiKey string, apiSecret string) *CoinbaseClient {
 	return &CoinbaseClient{
 		baseURL:   baseURL,
@@ -136,6 +86,41 @@ func (c *CoinbaseClient) sendWithJwt(ctx context.Context, req *http.Request, v a
 		return json.NewDecoder(resp.Body).Decode(v)
 	}
 	return nil
+}
+
+func (c *CoinbaseClient) send(ctx context.Context, req *http.Request, v any) error {
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("coinbase http %d", resp.StatusCode)
+	}
+	if v != nil {
+		return json.NewDecoder(resp.Body).Decode(v)
+	}
+	return nil
+}
+
+
+func (c *CoinbaseClient) GetHistoricalCandles(ctx context.Context, productID string) (CandlesResponse, error) {
+	url := fmt.Sprintf("%s/api/v3/brokerage/market/products/%s/candles", c.baseURL, productID)
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+
+	startUnix := time.Now().Add(-664 * time.Hour).Unix() // 26-ish days ago (should be 314 candles aka buckets)
+	endUnix := time.Now().Unix() 
+
+	// Convert the int64 values to strings for the URL query.
+	q := req.URL.Query()
+	q.Set("start", strconv.FormatInt(startUnix, 10))
+	q.Set("end", strconv.FormatInt(endUnix, 10))
+	q.Set("granularity", "TWO_HOUR")
+	req.URL.RawQuery = q.Encode()
+	var out CandlesResponse
+	return out, c.send(ctx, req, &out)
 }
 
 func (c *CoinbaseClient) ListAccounts(ctx context.Context) (AccountsListResponse, error) {

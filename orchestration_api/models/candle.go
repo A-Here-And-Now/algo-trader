@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
+)
 
 type CandleMsg struct {
 	Channel     string    `json:"channel"`
@@ -24,6 +28,22 @@ type Candle struct {
 	ProductID string
 }
 
+func GetCandles(candles []coinbase.Candle, productID string) []Candle {
+	candlesOut := make([]Candle, len(candles))
+	for i, candle := range candles {
+		candlesOut[i] = Candle{
+			Start:     candle.Start,
+			High:      candle.High,
+			Low:       candle.Low,
+			Open:      candle.Open,
+			Close:     candle.Close,
+			Volume:    candle.Volume,
+			ProductID: productID,
+		}
+	}
+	return candlesOut
+}
+
 type FrontEndCandle struct {
 	Start  string  `json:"start"`
 	High   float64 `json:"high"`
@@ -34,7 +54,7 @@ type FrontEndCandle struct {
 	Symbol string  `json:"symbol"`
 }
 
-func GetFrontEndCandle(candle Candle) FrontEndCandle {
+func (candle Candle) GetFrontEndCandle() FrontEndCandle {
 	return FrontEndCandle{
 		Start:  candle.Start,
 		High:   candle.High,

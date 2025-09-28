@@ -323,7 +323,12 @@ func (m *Manager) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 				for _, symbol := range msg.Symbols {
 					log.Printf("[WS] Subscribing to: %+v", msg.Symbols)
 					if _, ok := m.marketPriceResources[symbol]; !ok {
-						m.safeAddMarketPriceResource(symbol)
+						candles, err := m.client.GetHistoricalCandles(m.ctx, symbol)
+						if err != nil {
+							log.Printf("[WS] get historical candles error: %v", err)
+							continue
+						}
+						m.safeAddMarketPriceResource(symbol, models.GetCandles(candles.Candles, symbol))
 					}
 					m.subscriptionChannel <- symbol
 					safeMarketPriceResources := m.safeGetMarketPriceResources()
@@ -334,7 +339,7 @@ func (m *Manager) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 					for _, data := range safeMarketPriceResources[symbol].CandleHistory {
-						msg := models.GetFrontEndCandle(data)
+						msg := data.GetFrontEndCandle()
 						if err := conn.WriteJSON(msg); err != nil {
 							log.Printf("[WS] write error: %v", err)
 						}
@@ -379,7 +384,7 @@ func (m *Manager) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[WS] write error: %v", err)
 					}
 				case candle := <-resource.CandleFeed:
-					msg := models.GetFrontEndCandle(candle)
+					msg := candle.GetFrontEndCandle()
 					if err := conn.WriteJSON(msg); err != nil {
 						log.Printf("[WS] write error: %v", err)
 					}
