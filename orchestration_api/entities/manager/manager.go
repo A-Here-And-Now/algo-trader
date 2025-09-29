@@ -90,7 +90,7 @@ func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.
 	manager.client = coinbase.NewCoinbaseClient("https://api.coinbase.com", apiKey, apiSecret)
 
 	// init and start signal engine
-	manager.engine = signaler.NewSignalEngine(manager.ctx)
+	manager.engine = signaler.NewSignalEngine(manager.ctx, strategy)
 	manager.engine.Start()
 
 	go func() {
@@ -284,6 +284,7 @@ func (m *Manager) UpdateStrategy(strategy enum.Strategy) {
 		return
 	}
 	m.Cfg.strategy = strategy
+	m.engine.UpdateStrategy(strategy)
 	for _, tr := range m.safeGetTraderResources() {
 		tr.Cfg.Strategy = strategy
 		channel_helper.WriteToChannelAndBufferLatest(tr.Updates, trader.TradeCfg{

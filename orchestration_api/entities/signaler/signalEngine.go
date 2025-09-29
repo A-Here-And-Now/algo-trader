@@ -2,36 +2,49 @@ package signaler
 
 import (
 	"context"
-	// "log"
+	"log"
 	"sync"
 	"time"
 
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 )
 
 // SignalEngine ingests prices and candles and periodically emits signals
 type SignalEngine struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	mu                 sync.RWMutex
-	signalingResources map[string]*SignalingResource // per-token price feed channel (input)
+	ctx    				context.Context
+	cancel 				context.CancelFunc
+	priceActionStore 	*priceActionStore
+	mu                  sync.RWMutex
+	signalingResources  map[string]*SignalingResource // per-token price feed channel (input)
+	strategy            Strategy
 }
 
-func NewSignalEngine(parent context.Context) *SignalEngine {
+func NewSignalEngine(parent context.Context, strategy enum.Strategy) *SignalEngine {
 	ctx, cancel := context.WithCancel(parent)
-	return &SignalEngine{
+
+	se := SignalEngine{
 		ctx:                ctx,
 		cancel:             cancel,
+		priceActionStore:   NewStore(strategy),
 		signalingResources: make(map[string]*SignalingResource),
 	}
+
+	se.UpdateStrategy(strategy)
+
+	return &se
+}
+
+func (se *SignalEngine) UpdateStrategy(strategy enum.Strategy) {
+	se.priceActionStore.UpdateActiveIndicators(strategy)
+	se.strategy = NewStrategy(strategy)
 }
 
 // RegisterToken wires the channels for a token. Manager should create the channels and pass them in.
-func (se *SignalEngine) RegisterToken(symbol string, priceFeed chan models.Ticker, candleFeed chan models.Candle, signalCh chan enum.Signal, priceHistory []models.Ticker, candleHistory []models.Candle, candleHistory26Days []models.Candle) {
+func (se *SignalEngine) RegisterToken(symbol string, priceFeed chan models.Ticker, candleFeed chan models.Candle, signalCh chan models.Signal, priceHistory []models.Ticker, candleHistory []models.Candle, candleHistory26Days []models.Candle) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
+	se.priceActionStore.AddToken(symbol, priceHistory, candleHistory, candleHistory26Days)
 	se.signalingResources[symbol] = NewSignalingResource(priceFeed, candleFeed, signalCh, priceHistory, candleHistory, candleHistory26Days)
 }
 
@@ -40,6 +53,7 @@ func (se *SignalEngine) UnregisterToken(symbol string) {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	delete(se.signalingResources, symbol)
+	se.priceActionStore.RemoveToken(symbol)
 }
 
 // Start launches the engine goroutine per token
@@ -85,14 +99,14 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 		// drain non-blocking new data
 		for drained := 0; drained < 10; drained++ { // cap to avoid infinite loops
 			select {
-			case tick := <-priceCh:
-				se.appendPrice(symbol, tick)
+			case t := <-priceCh:
+				se.priceActionStore.IngestPrice(symbol, t)
 				continue
 			case c := <-candleCh:
-				se.appendCandle(symbol, c)
+				se.priceActionStore.IngestCandle(symbol, c)
 				continue
 			default:
-				break
+				break // break out since no data
 			}
 		}
 
@@ -100,56 +114,22 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 	}
 }
 
-func (se *SignalEngine) appendPrice(symbol string, tick models.Ticker) {
-	se.mu.Lock()
-	defer se.mu.Unlock()
-	se.signalingResources[symbol].priceHistory = append(se.signalingResources[symbol].priceHistory, tick)
-	// keep only last N ticks for memory safety
-	buf := se.signalingResources[symbol].priceHistory
-	const maxTicks = 1200 // ~10 minutes if ~2/s
-	if len(buf) > maxTicks {
-		buf = buf[len(buf)-maxTicks:]
-	}
-	se.signalingResources[symbol].priceHistory = buf
-}
+func (se *SignalEngine) maybeEmitSignal(symbol string) {
+	se.mu.RLock()
+	lastAt := se.signalingResources[symbol].lastSignalAt
+	signalCh := se.signalingResources[symbol].signalCh
+	se.mu.RUnlock()
 
-func (se *SignalEngine) appendCandle(symbol string, c models.Candle) {
-	se.mu.Lock()
-	defer se.mu.Unlock()
-	length := len(se.signalingResources[symbol].candleHistory)
-	if (se.signalingResources[symbol].candleHistory[length-1].Start == c.Start) {
-		se.signalingResources[symbol].candleHistory[length-1] = c
-	} else {
-		se.signalingResources[symbol].candleHistory = append(se.signalingResources[symbol].candleHistory, c)
-		if len(se.signalingResources[symbol].candleHistory) > 24 {
-			se.signalingResources[symbol].fiveMinuteCandleCounter++
-			se.signalingResources[symbol].candleHistory = se.signalingResources[symbol].candleHistory[1:]
-			if se.signalingResources[symbol].fiveMinuteCandleCounter >= 24 {
-				se.signalingResources[symbol].fiveMinuteCandleCounter = 0
-				se.signalingResources[symbol].Shift26DayCandleHistory(se.signalingResources[symbol].candleHistory)
-			}
+	if (lastAt.Before(time.Now().Add(-1 * time.Minute))) {
+		signal := se.strategy.CalculateSignal(symbol, se.priceActionStore)
+		select {
+		case signalCh <- signal:
+			log.Printf("[SignalEngine %s] emitted %s %.2f%%\n", symbol, signal.Type.String(), signal.Percent)
+			se.mu.Lock()
+			se.signalingResources[symbol].lastSignalAt = time.Now()
+			se.mu.Unlock()
+		default:
+			// drop if receiver is slow
 		}
 	}
-}
-
-
-
-func (se *SignalEngine) maybeEmitSignal(symbol string) {
-	// se.mu.RLock()
-	// lastAt := se.signalingResources[symbol].lastSignalAt
-	// prices := se.signalingResources[symbol].priceHistory
-	// candles := se.signalingResources[symbol].candleHistory
-	// signalCh := se.signalingResources[symbol].signalCh
-	// se.mu.RUnlock()
-
-
-	// select {
-	// case signalCh <- enum.Signal{Symbol: symbol, Type: stype, Percent: percent, Time: time.Now()}:
-	// 	log.Printf("[SignalEngine %s] emitted %s %.2f%%", symbol, stype.String(), percent)
-	// 	se.mu.Lock()
-	// 	se.signalingResources[symbol].lastSignalAt = time.Now()
-	// 	se.mu.Unlock()
-	// default:
-	// 	// drop if receiver is slow
-	// }
 }

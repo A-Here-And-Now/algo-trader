@@ -4,12 +4,11 @@ import (
 	"context"
 
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 )
 
 type TraderResource struct {
-	SignalChan               chan enum.Signal
+	SignalChan               chan models.Signal
 	PriceFeedToSignalEngine  chan models.Ticker
 	PriceFeedToTrader        chan models.Ticker
 	CandleFeedToSignalEngine chan models.Candle
@@ -25,7 +24,7 @@ type TraderResource struct {
 
 func NewTraderResource(cfg TradeCfg, done chan struct{}, cancel context.CancelFunc, updates chan TradeCfg) *TraderResource {
 	return &TraderResource{
-		SignalChan:               make(chan enum.Signal),
+		SignalChan:               make(chan models.Signal),
 		PriceFeedToSignalEngine:  make(chan models.Ticker),
 		PriceFeedToTrader:        make(chan models.Ticker),
 		CandleFeedToSignalEngine: make(chan models.Candle),

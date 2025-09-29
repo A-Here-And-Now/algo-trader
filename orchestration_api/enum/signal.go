@@ -1,29 +1,38 @@
 package enum
 
-import "time"
+import "fmt"
 
-type Signal struct {
-	Symbol  string
-	Type    SignalType
-	Percent float64 // 0-100 meaning percent of allocated funds or position per rules
-	Time    time.Time
-}
-
-// SignalType represents buy/sell; hold is omitted (we don't emit holds)
+// SignalType represents buy/sell/hold
 type SignalType int
 
 const (
 	SignalBuy SignalType = iota
 	SignalSell
+	SignalHold
 )
 
 func (s SignalType) String() string {
 	switch s {
 	case SignalBuy:
-		return "BUY"
+		return "SignalBuy"
 	case SignalSell:
-		return "SELL"
+		return "SignalSell"
+	case SignalHold:
+		return "SignalHold"
 	default:
-		return "UNKNOWN"
+		return ""
+	}
+}
+
+func GetSignalType(s string) SignalType {
+	switch s {
+	case "SignalBuy":
+		return SignalBuy
+	case "SignalSell":
+		return SignalSell
+	case "SignalHold":
+		return SignalHold
+	default:
+		panic(fmt.Sprintf("Unknown SignalType (%s)", s))
 	}
 }

@@ -17,7 +17,7 @@ type Trader struct {
 	ctx                         context.Context
 	cancel                      context.CancelFunc
 	updates                     chan TradeCfg
-	signalCh                    chan enum.Signal
+	signalCh                    chan models.Signal
 	actualPositionToken         float64
 	actualPositionUSD           float64 // actual position in USD
 	usdAmountPerFulfilledOrders float64 // actual position in USD without gains or losses
@@ -38,7 +38,7 @@ func (t *Trader) getActualPositionPct() float64 {
 }
 
 // NewTrader builds a trader instance from a config.
-func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, updates chan TradeCfg, signalCh chan enum.Signal, orderFeed chan coinbase.OrderUpdate, startingTokenBalance float64) *Trader {
+func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, updates chan TradeCfg, signalCh chan models.Signal, orderFeed chan coinbase.OrderUpdate, startingTokenBalance float64) *Trader {
 	return &Trader{cfg: cfg, ctx: ctx, cancel: cancel, updates: updates, signalCh: signalCh, orderFeed: orderFeed, actualPositionToken: startingTokenBalance}
 }
 
@@ -82,15 +82,20 @@ func (t *Trader) adjustTargetPositionAccordingToAllocatedFundsUpdate(update Trad
 	// adjust target position to maintain same target percentage after allocation change
 	oldTargetPct := t.getTargetPositionPct()
 	log.Printf("[Trader %s] AllocatedFunds updating from %v to %v", t.cfg.Symbol, t.cfg.AllocatedFunds, update.AllocatedFunds)
+	if (t.cfg.Strategy != update.Strategy) {
+		t.targetPositionUSD = 0
+	}
 	t.cfg = update
 	newTargetPct := t.getTargetPositionPct()
-	targetPositionIncrease := (newTargetPct - oldTargetPct) * t.cfg.AllocatedFunds / 100.0
-	t.targetPositionUSD += targetPositionIncrease
-	log.Printf("[Trader %s] Target position increased by %v to a resulting value of %v", t.cfg.Symbol, targetPositionIncrease, t.targetPositionUSD)
+	if (newTargetPct != oldTargetPct) {
+		targetPositionIncrease := (newTargetPct - oldTargetPct) * t.cfg.AllocatedFunds / 100.0
+		t.targetPositionUSD += targetPositionIncrease
+		log.Printf("[Trader %s] Target position increased by %v to a resulting value of %v", t.cfg.Symbol, targetPositionIncrease, t.targetPositionUSD)
+	}
 }
 
 // handleSignal executes buy/sell respecting rules on allocated funds and bounds 0..100
-func (t *Trader) handleSignal(s enum.Signal) {
+func (t *Trader) handleSignal(s models.Signal) {
 	log.Printf("[Trader %s] Signal received: Percent=%v Type=%s", t.cfg.Symbol, s.Percent, s.Type)
 	if s.Percent <= 0 {
 		return
