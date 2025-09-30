@@ -12,12 +12,12 @@ import (
 
 // SignalEngine ingests prices and candles and periodically emits signals
 type SignalEngine struct {
-	ctx    				context.Context
-	cancel 				context.CancelFunc
-	priceActionStore 	*priceActionStore
-	mu                  sync.RWMutex
-	signalingResources  map[string]*SignalingResource // per-token price feed channel (input)
-	strategy            Strategy
+	ctx                context.Context
+	cancel             context.CancelFunc
+	priceActionStore   *priceActionStore
+	mu                 sync.RWMutex
+	signalingResources map[string]*SignalingResource // per-token price feed channel (input)
+	strategy           Strategy
 }
 
 func NewSignalEngine(parent context.Context, strategy enum.Strategy) *SignalEngine {
@@ -36,7 +36,6 @@ func NewSignalEngine(parent context.Context, strategy enum.Strategy) *SignalEngi
 }
 
 func (se *SignalEngine) UpdateStrategy(strategy enum.Strategy) {
-	se.priceActionStore.UpdateActiveIndicators(strategy)
 	se.strategy = NewStrategy(strategy)
 }
 
@@ -97,6 +96,7 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 		se.mu.RUnlock()
 
 		// drain non-blocking new data
+		drain:
 		for drained := 0; drained < 10; drained++ { // cap to avoid infinite loops
 			select {
 			case t := <-priceCh:
@@ -106,7 +106,7 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 				se.priceActionStore.IngestCandle(symbol, c)
 				continue
 			default:
-				break // break out since no data
+				break drain // break out since no data
 			}
 		}
 
@@ -120,11 +120,12 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 	signalCh := se.signalingResources[symbol].signalCh
 	se.mu.RUnlock()
 
-	if (lastAt.Before(time.Now().Add(-1 * time.Minute))) {
+	if lastAt.Before(time.Now().Add(-1 * time.Minute)) {
 		signal := se.strategy.CalculateSignal(symbol, se.priceActionStore)
 		select {
 		case signalCh <- signal:
 			log.Printf("[SignalEngine %s] emitted %s %.2f%%\n", symbol, signal.Type.String(), signal.Percent)
+			se.strategy.ConfirmSignalDelivered(symbol, signal.Type)
 			se.mu.Lock()
 			se.signalingResources[symbol].lastSignalAt = time.Now()
 			se.mu.Unlock()
