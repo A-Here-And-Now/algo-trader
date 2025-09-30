@@ -1,82 +1,99 @@
 package signaler
 
 import (
-	"log"
-	"time"
+    "log"
+    "time"
 
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
-	talib "github.com/markcheno/go-talib"
+    "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+    "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
+    talib "github.com/markcheno/go-talib"
 )
 
+/* ------------------------------------------------------------------------ PUBLIC INTERFACE ------------------------------------------------------------------------ */
 type Strategy interface {
-	ConfirmSignalDelivered(symbol string, signalType enum.SignalType)
-	CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal
+    ConfirmSignalDelivered(symbol string, signalType enum.SignalType)
+    CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal
 }
 
+/* ------------------------------------------------------------------------ SHARED STATE HELPERS ------------------------------------------------------------------------ */
+type positionState struct {
+    inPosition bool
+    side       enum.SignalType
+    entryPrice float64
+    takeProfit float64
+    stopLoss   float64
+}
+
+// Holds the map and the common ConfirmSignalDelivered implementation.
+type positionHolder struct {
+    state map[string]*positionState
+}
+
+func newPositionHolder() *positionHolder {
+    return &positionHolder{state: make(map[string]*positionState)}
+}
+
+func (h *positionHolder) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
+    if _, ok := h.state[symbol]; !ok {
+        h.state[symbol] = &positionState{}
+    }
+    h.state[symbol].inPosition = signalType == enum.SignalBuy
+}
+
+/* ------------------------------------------------------------------------ FACTORY ------------------------------------------------------------------------ */
 func NewStrategy(strategy enum.Strategy) Strategy {
-	switch strategy {
-	case enum.MeanReversion:
-		return &MeanReversionStrategy{
-			state:           make(map[string]*positionState),
-			tpATRMultiplier: 4.0,
-			slATRMultiplier: 2.0,
-		}
-	case enum.TrendFollowingWithMomentumConfirmation:
-		return &TrendFollowingWithMomentumConfirmationStrategy{
-			state:           make(map[string]*positionState),
-		}
-	case enum.CandlestickSignalAggregation:
-		return &CandlestickSignalAggregationStrategy{
-			state:           make(map[string]*positionState),
-		}
+    switch strategy {
+    case enum.MeanReversion:
+        return &MeanReversionStrategy{
+            positionHolder:   newPositionHolder(),
+            tpATRMultiplier: 4.0,
+            slATRMultiplier: 2.0,
+        }
+    case enum.TrendFollowingWithMomentumConfirmation:
+        return &TrendFollowingWithMomentumConfirmationStrategy{
+            positionHolder: newPositionHolder(),
+        }
+    case enum.CandlestickSignalAggregation:
+        return &CandlestickSignalAggregationStrategy{
+            positionHolder: newPositionHolder(),
+        }
 	case enum.RenkoCandlesticks:
 		return &RenkoCandlesticksStrategy{
-			state:           make(map[string]*positionState),
+			positionHolder: newPositionHolder(),
 		}
 	case enum.HeikenAshi:
 		return &HeikenAshiStrategy{
-			state:           make(map[string]*positionState),
+			positionHolder: newPositionHolder(),
 		}
 	case enum.DonchianChannel:
 		return &DonchianChannelStrategy{
-			state:           make(map[string]*positionState),
+			positionHolder: newPositionHolder(),
 		}
 	case enum.TrendlineBreakout:
 		return &TrendlineBreakoutStrategy{
-			state:           make(map[string]*positionState),
+			positionHolder: newPositionHolder(),
 		}
 	case enum.Supertrend:
 		return &SupertrendStrategy{
-			state:           make(map[string]*positionState),
+			positionHolder: newPositionHolder(),
 		}
 	case enum.GroverLlorensActivator:
 		return &GroverLlorensActivatorStrategy{
-			state:           make(map[string]*positionState),
+			positionHolder: newPositionHolder(),
 		}
-	}
-	return nil
+    }
+    return nil
 }
 
-type positionState struct {
-	inPosition bool
-	side       enum.SignalType // SignalBuy when long, SignalSell when short
-	entryPrice float64
-	takeProfit float64
-	stopLoss   float64
-}
-/*******************************************/
-/***************MeanReversion***************/
-/*******************************************/
+/* ------------------------------------------------------------------------ CONCRETE STRATEGIES ------------------------------------------------------------------------ */
 
+/*******************************************/
+/***********MeanReversionStrategy***********/
+/*******************************************/
 type MeanReversionStrategy struct {
-	state           map[string]*positionState
-	tpATRMultiplier float64
-	slATRMultiplier float64
-}
-
-func (s *MeanReversionStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
+    *positionHolder                // embed – gives us .state + ConfirmSignalDelivered
+    tpATRMultiplier float64
+    slATRMultiplier float64
 }
 
 func (s *MeanReversionStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
@@ -162,47 +179,29 @@ func (s *MeanReversionStrategy) CalculateSignal(symbol string, priceStore PriceA
 }
 
 /*******************************************/
-/***TrendFollowingWithMomentumConfirmation**/
+/*****TrendFollowingWithMomConfStrategy*****/
 /*******************************************/
-type TrendFollowingWithMomentumConfirmationStrategy struct{
-	state           map[string]*positionState
-}
-
-func (s *TrendFollowingWithMomentumConfirmationStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
-}
+type TrendFollowingWithMomentumConfirmationStrategy struct{ *positionHolder }
 
 func (s *TrendFollowingWithMomentumConfirmationStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
-	
-
-	return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
+    
+    return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
 }
 
 /*******************************************/
-/*********CandlestickSignalAggregation******/
+/****CandlestickSignalAggregationStrategy***/
 /*******************************************/
-type CandlestickSignalAggregationStrategy struct{
-	state           map[string]*positionState
-}
-
-func (s *CandlestickSignalAggregationStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
-}
+type CandlestickSignalAggregationStrategy struct{ *positionHolder }
 
 func (s *CandlestickSignalAggregationStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
-	return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
+
+    return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
 }
 
 /*******************************************/
 /***********RenkoCandlesticks***************/
 /*******************************************/
-type RenkoCandlesticksStrategy struct{
-	state           map[string]*positionState
-}
-
-func (s *RenkoCandlesticksStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
-}
+type RenkoCandlesticksStrategy struct{ *positionHolder }
 
 func (s *RenkoCandlesticksStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
 	return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
@@ -211,13 +210,7 @@ func (s *RenkoCandlesticksStrategy) CalculateSignal(symbol string, priceStore Pr
 /*******************************************/
 /***************HeikenAshi******************/
 /*******************************************/
-type HeikenAshiStrategy struct{
-	state           map[string]*positionState
-}
-
-func (s *HeikenAshiStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
-}
+type HeikenAshiStrategy struct{ *positionHolder }
 
 func (s *HeikenAshiStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
 	return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
@@ -226,13 +219,7 @@ func (s *HeikenAshiStrategy) CalculateSignal(symbol string, priceStore PriceActi
 /*******************************************/
 /***************DonchianChannel*************/
 /*******************************************/
-type DonchianChannelStrategy struct{
-	state           map[string]*positionState
-}
-
-func (s *DonchianChannelStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
-}
+type DonchianChannelStrategy struct{ *positionHolder }
 
 func (s *DonchianChannelStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
 	return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
@@ -241,13 +228,7 @@ func (s *DonchianChannelStrategy) CalculateSignal(symbol string, priceStore Pric
 /*******************************************/
 /***************TrendlineBreakout***********/
 /*******************************************/
-type TrendlineBreakoutStrategy struct{
-	state           map[string]*positionState
-}
-
-func (s *TrendlineBreakoutStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
-}
+type TrendlineBreakoutStrategy struct{ *positionHolder }
 
 func (s *TrendlineBreakoutStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
 	return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
@@ -256,13 +237,7 @@ func (s *TrendlineBreakoutStrategy) CalculateSignal(symbol string, priceStore Pr
 /*******************************************/
 /****************Supertrend*****************/
 /*******************************************/
-type SupertrendStrategy struct{
-	state           map[string]*positionState
-}
-
-func (s *SupertrendStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
-}
+type SupertrendStrategy struct{	*positionHolder }
 
 func (s *SupertrendStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
 	return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
@@ -271,13 +246,7 @@ func (s *SupertrendStrategy) CalculateSignal(symbol string, priceStore PriceActi
 /*******************************************/
 /***********GroverLlorensActivator**********/
 /*******************************************/
-type GroverLlorensActivatorStrategy struct{
-	state           map[string]*positionState
-}
-
-func (s *GroverLlorensActivatorStrategy) ConfirmSignalDelivered(symbol string, signalType enum.SignalType) {
-	s.state[symbol].inPosition = signalType == enum.SignalBuy;
-}
+type GroverLlorensActivatorStrategy struct{	*positionHolder }
 
 func (s *GroverLlorensActivatorStrategy) CalculateSignal(symbol string, priceStore PriceActionStore) models.Signal {
 	return models.Signal{Symbol: symbol, Type: enum.SignalHold, Percent: 0, Time: time.Now()}
