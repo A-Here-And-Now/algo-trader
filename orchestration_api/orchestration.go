@@ -125,7 +125,7 @@ func main() {
 	shutdownCtx, shutdown := context.WithCancel(context.Background())
 
 	// propagate manager lifecycle context so we can skip reallocations during shutdown
-	mgr = manager.NewManager(availableFunds, 1000, enum.TrendFollowingWithMomentumConfirmation, shutdownCtx, apiKey, apiSecret, tokens)
+	mgr = manager.NewManager(availableFunds, 1000, enum.TrendFollowing, shutdownCtx, apiKey, apiSecret, tokens)
 
 	// listen to OS signals
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

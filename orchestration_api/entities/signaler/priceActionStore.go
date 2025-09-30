@@ -173,34 +173,20 @@ func (s *priceActionStore) GetFullMergedCandleHistory(symbol string) CandleHisto
     merged := make([]models.Candle, 0, len(orig.Candles))
     merged = append(merged, orig.Candles...) // copy the existing data
 
-    shortLen := len(s.candleHistory[symbol].Candles)
-
-    if shortLen >= 12 {
-        merged = append(merged, s.getFirstOrSecondTwoHourCandleFromShortHistory(symbol, false))
-    }
-    if shortLen == 24 {
-        merged = append(merged, s.getFirstOrSecondTwoHourCandleFromShortHistory(symbol, true))
-    }
+	if len(s.candleHistory[symbol].Candles) > 0 {
+		merged = append(merged, s.getTwoHourCandleFromShortHistory(symbol))
+	}
 
     return CandleHistory{Candles: merged}
 }
 
-func (s *priceActionStore) getFirstOrSecondTwoHourCandleFromShortHistory(symbol string, isSecond bool) models.Candle {
-	if len(s.candleHistory[symbol].Candles) < 12 {
-		panic("Short history is too short to get first two hour candle")
-	}
-	firstIndex := 0
-	secondIndex := 12
-	if isSecond {
-		firstIndex = 12
-		secondIndex = 24
-	}
+func (s *priceActionStore) getTwoHourCandleFromShortHistory(symbol string) models.Candle {
 	new2HourCandle := models.Candle{
-		Start: s.candleHistory[symbol].Candles[firstIndex].Start,
-		Open: s.candleHistory[symbol].Candles[firstIndex].Open,
-		Close: s.candleHistory[symbol].Candles[secondIndex-1].Close,
+		Start: s.candleHistory[symbol].Candles[0].Start,
+		Open: s.candleHistory[symbol].Candles[0].Open,
+		Close: s.candleHistory[symbol].Candles[0].Close,
 	}
-	for _, candle := range s.candleHistory[symbol].Candles[firstIndex:secondIndex] {
+	for _, candle := range s.candleHistory[symbol].Candles {
 		new2HourCandle.High = math.Max(new2HourCandle.High, candle.High)
 		new2HourCandle.Low = math.Min(new2HourCandle.Low, candle.Low)
 		new2HourCandle.Volume += candle.Volume
