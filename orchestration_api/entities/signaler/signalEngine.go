@@ -98,8 +98,7 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 		se.mu.RUnlock()
 
 		// drain non-blocking new data
-		drain:
-		for drained := 0; drained < 10; drained++ { // cap to avoid infinite loops
+		drain: for drained := 0; drained < 10; drained++ { // cap to avoid infinite loops
 			select {
 			case t := <-priceCh:
 				se.priceActionStore.IngestPrice(symbol, t)
@@ -124,6 +123,8 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 
 	if lastAt.Before(time.Now().Add(-1 * time.Minute)) {
 		signal := se.strategy.CalculateSignal(symbol, se.priceActionStore)
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()	
 		select {
 		case signalCh <- signal:
 			log.Printf("[SignalEngine %s] emitted %s %.2f%%\n", symbol, signal.Type.String(), signal.Percent)
@@ -131,7 +132,7 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 			se.mu.Lock()
 			se.signalingResources[symbol].lastSignalAt = time.Now()
 			se.mu.Unlock()
-		default:
+		case <-ticker.C:
 			// drop if receiver is slow
 		}
 	}

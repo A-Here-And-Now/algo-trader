@@ -19,8 +19,8 @@ func NewStrategy(strategy enum.Strategy) Strategy {
 	case enum.MeanReversion:
 		return &strategies.MeanReversionStrategy{
 			PositionHolder:  helper.NewPositionHolder(),
-			TpATRMultiplier: 4.0,
-			SlATRMultiplier: 2.0,
+			TpATRMultiplier: 3.50,
+			SlATRMultiplier: 1.75,
 		}
 	case enum.TrendFollowing:
 		return &strategies.TrendFollowingStrategy{
@@ -32,15 +32,20 @@ func NewStrategy(strategy enum.Strategy) Strategy {
 		}
 	case enum.RenkoCandlesticks:
 		return &strategies.RenkoCandlesticksStrategy{
-			PositionHolder: helper.NewPositionHolder(),
-			AtrLen: 26,
-			StopLossPct: 10.0,
-			TakeProfitPct: 50.0,
+			PositionHolder:    helper.NewPositionHolder(),
+			AtrLen:            26,
+			StopLossPct:       10.0,
+			TakeProfitPct:     50.0,
 			BrickSizeConstant: 1.5,
 		}
 	case enum.HeikenAshi:
 		return &strategies.HeikenAshiStrategy{
-			PositionHolder: helper.NewPositionHolder(),
+			PositionHolder:    helper.NewPositionHolder(),
+			AtrPeriod:         26,
+			AtrLineMultiplier: 4.0,
+			TpATRMultiplier:   3.50,
+			SlATRMultiplier:   1.75,
+			NumEmaPeriods:     20,
 		}
 	case enum.DonchianChannel:
 		return &strategies.DonchianChannelStrategy{

@@ -18,17 +18,15 @@ type RenkoCandlesticksStrategy struct{
 }
 
 func (s *RenkoCandlesticksStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
-	stopLossPct := s.StopLossPct
-	takeProfitPct := s.TakeProfitPct
 	atrLen := s.AtrLen
 
 	hist := priceStore.GetCandleHistory(symbol)
 	regCloses := hist.GetCloses()
     i := len(regCloses) - 1
     atr := talib.Atr(hist.GetHighs(), hist.GetLows(), regCloses, atrLen)
-	
+	brickSize := s.BrickSizeConstant * atr[i]
 	if !priceStore.IsRenkoCandleHistoryBuilt() {
-		priceStore.BuildRenkoCandleHistory(s.BrickSizeConstant * atr[i])
+		priceStore.BuildRenkoCandleHistory(brickSize)
 	}
 	renkoCandles := priceStore.GetRenkoCandleHistory(symbol)
 	
@@ -58,8 +56,9 @@ func (s *RenkoCandlesticksStrategy) CalculateSignal(symbol string, priceStore he
             Type:     enum.SignalBuy,
             Percent:  100,
             Time:     time.Now(),
-			TakeProfit: regCloses[i] * (1 + takeProfitPct / 100),
-			StopLoss: regCloses[i] * (1 - stopLossPct / 100),
+			// since this is renko, brick size makes more sense than a hard price percent delta for take profit and stop loss
+			TakeProfit: regCloses[i] + (3 * brickSize), 
+			StopLoss: regCloses[i] - (1.5 * brickSize),
 			Price: regCloses[i],
         }
 	} else if s.PositionHolder.State[symbol].InPosition {
