@@ -9,7 +9,7 @@ const (
 	MeanReversion Strategy = iota                // https://www.tradingview.com/script/zjPWQO39-The-Barking-Rat-Lite/
 	TrendFollowing                               // https://www.tradingview.com/script/mVkDf8qh-TrendMaster-Pro-2-3-with-Alerts/
 	CandlestickSignalAggregation                 // https://www.tradingview.com/script/ubNhdO2q-Grand-Master-s-Candlestick-Dominance-ATR-Enhanced/
-	RenkoCandlesticks                            // https://www.tradingview.com/script/O3qQrueT-Triple-Quad-Frosty-v4-5/
+	RenkoCandlesticks                            // https://www.tradingview.com/script/O3qQrueT-Triple-Quad-Frosty-v4-5/ I would need to create my own renko candlesticks
 	HeikenAshi                                   // https://www.tradingview.com/script/EdeSmT9i-Mutanabby-AI-ATR-Trend-Following-Strategy/
 	DonchianChannel                              // https://www.tradingview.com/script/72LSDcg6-Larry-Williams-Donchian-Breakout-Strategy/
 	TrendlineBreakout                            // https://www.tradingview.com/script/grMQIRAr-Trendline-Breakout-Strategy-KedArc-Quant/ and https://www.tradingview.com/script/4juJumUH-Instant-Breakout-Strategy-with-RSI-VWAP/

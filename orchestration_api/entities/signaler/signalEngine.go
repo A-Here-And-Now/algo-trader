@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	strategy_helper "github.com/A-Here-And-Now/algo-trader/orchestration_api/entities/signaler/strategy_helper"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 )
@@ -14,7 +15,7 @@ import (
 type SignalEngine struct {
 	ctx                context.Context
 	cancel             context.CancelFunc
-	priceActionStore   *priceActionStore
+	priceActionStore   *strategy_helper.PriceActionStore
 	mu                 sync.RWMutex
 	signalingResources map[string]*SignalingResource // per-token price feed channel (input)
 	strategy           Strategy
@@ -26,7 +27,7 @@ func NewSignalEngine(parent context.Context, strategy enum.Strategy) *SignalEngi
 	se := SignalEngine{
 		ctx:                ctx,
 		cancel:             cancel,
-		priceActionStore:   NewStore(strategy),
+		priceActionStore:   strategy_helper.NewStore(strategy),
 		signalingResources: make(map[string]*SignalingResource),
 	}
 
@@ -36,6 +37,7 @@ func NewSignalEngine(parent context.Context, strategy enum.Strategy) *SignalEngi
 }
 
 func (se *SignalEngine) UpdateStrategy(strategy enum.Strategy) {
+	se.priceActionStore.UpdateStrategy(strategy)
 	se.strategy = NewStrategy(strategy)
 }
 
@@ -125,7 +127,7 @@ func (se *SignalEngine) maybeEmitSignal(symbol string) {
 		select {
 		case signalCh <- signal:
 			log.Printf("[SignalEngine %s] emitted %s %.2f%%\n", symbol, signal.Type.String(), signal.Percent)
-			se.strategy.ConfirmSignalDelivered(symbol, signal.Type)
+			se.strategy.ConfirmSignalDelivered(symbol, signal)
 			se.mu.Lock()
 			se.signalingResources[symbol].lastSignalAt = time.Now()
 			se.mu.Unlock()

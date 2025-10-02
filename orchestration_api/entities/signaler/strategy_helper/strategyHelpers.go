@@ -1,4 +1,4 @@
-package strategy_helpers
+package strategy_helper
 
 import (
 	"math"

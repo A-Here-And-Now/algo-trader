@@ -65,3 +65,17 @@ func (candle Candle) GetFrontEndCandle() FrontEndCandle {
 		Symbol: candle.ProductID,
 	}
 }
+
+type HeikenAshiCandle struct {
+	Start string
+	High  float64
+	Low   float64
+	Open  float64
+	Close float64
+	Volume float64
+}
+
+type RenkoCandle struct {
+	Open  float64
+	Close float64
+}

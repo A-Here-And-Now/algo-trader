@@ -9,6 +9,9 @@ import (
 type Signal struct {
 	Symbol  string
 	Type    enum.SignalType
-	Percent float64 // 0-100 meaning percent of allocated funds or position per rules
+	Percent float64
 	Time    time.Time
+	TakeProfit float64
+	StopLoss float64
+	Price float64
 }
