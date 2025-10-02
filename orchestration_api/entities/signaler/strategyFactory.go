@@ -59,6 +59,12 @@ func NewStrategy(strategy enum.Strategy) Strategy {
 	case enum.TrendlineBreakout:
 		return &strategies.TrendlineBreakoutStrategy{
 			PositionHolder: helper.NewPositionHolder(),
+			PivLR: 5,
+			UseEmaFilter: true,
+			EmaLen: 120,
+			AtrLen: 14,
+			TsAtrMult: 1.5,
+			TpAtrMult: 4,
 		}
 	case enum.Supertrend:
 		return &strategies.SupertrendStrategy{

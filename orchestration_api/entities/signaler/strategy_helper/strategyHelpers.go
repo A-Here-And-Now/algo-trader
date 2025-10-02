@@ -168,3 +168,31 @@ func GetHLPivot(highs []float64, lows []float64, swingPivotLength int) (float64,
 	}
 	return ph, pl
 }
+
+func LinePriceAt(x1 float64, y1 float64, x2 float64, y2 float64, idx float64) float64 {
+	if x2 == x1 {
+		return y2
+	}
+	slope := (y2 - y1) / (x2 - x1)
+	return y2 + slope*(idx-x2)
+}
+
+func MinSlice(slice []float64, from, to int) float64 {
+	m := slice[from]
+	for k := from + 1; k <= to; k++ {
+		if slice[k] < m {
+			m = slice[k]
+		}
+	}
+	return m
+}
+
+func MaxSlice(slice []float64, from, to int) float64 {
+	m := slice[from]
+	for k := from + 1; k <= to; k++ {
+		if slice[k] > m {
+			m = slice[k]
+		}
+	}
+	return m
+}
