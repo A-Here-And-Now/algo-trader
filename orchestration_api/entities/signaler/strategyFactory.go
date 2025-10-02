@@ -11,6 +11,7 @@ import (
 type Strategy interface {
 	ConfirmSignalDelivered(symbol string, signal models.Signal)
 	CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal
+	UpdateTrailingStop(symbol string, ticker models.Ticker)
 }
 
 /* ------------------------------------------------------------------------ FACTORY ------------------------------------------------------------------------ */
@@ -26,8 +27,8 @@ func NewStrategy(strategy enum.Strategy) Strategy {
 		return &strategies.TrendFollowingStrategy{
 			PositionHolder: helper.NewPositionHolder(),
 		}
-	case enum.CandlestickSignalAggregation:
-		return &strategies.CandlestickSignalAggregationStrategy{
+	case enum.CandlestickAggregation:
+		return &strategies.CandlestickAggregationStrategy{
 			PositionHolder: helper.NewPositionHolder(),
 		}
 	case enum.RenkoCandlesticks:
@@ -47,9 +48,13 @@ func NewStrategy(strategy enum.Strategy) Strategy {
 			SlATRMultiplier:   1.75,
 			NumEmaPeriods:     20,
 		}
-	case enum.DonchianChannel:
-		return &strategies.DonchianChannelStrategy{
-			PositionHolder: helper.NewPositionHolder(),
+	case enum.TurtleTrader:
+		return &strategies.TurtleTraderStrategy{
+			PositionHolder:       helper.NewPositionHolder(),
+			NumberOfPeriods:      26,
+			PredictionUnit:       "atr",
+			PredictionMultiplier: 4.0,
+			UsePullbackFilter:    true,
 		}
 	case enum.TrendlineBreakout:
 		return &strategies.TrendlineBreakoutStrategy{

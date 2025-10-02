@@ -7,11 +7,14 @@ import (
 )
 
 type Signal struct {
-	Symbol  string
-	Type    enum.SignalType
-	Percent float64
-	Time    time.Time
-	TakeProfit float64
-	StopLoss float64
-	Price float64
+	Symbol                    string
+	Type                      enum.SignalType
+	Percent                   float64
+	Time                      time.Time
+	TakeProfit                float64
+	StopLoss                  float64
+	TrailingStop              float64
+	PositionIncreaseThreshold float64
+	Price                     float64
+	LastTrailingStopPrice     float64
 }

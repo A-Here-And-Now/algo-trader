@@ -102,6 +102,9 @@ func (se *SignalEngine) ingestOnceAndMaybeSignal() {
 			select {
 			case t := <-priceCh:
 				se.priceActionStore.IngestPrice(symbol, t)
+				if (se.strategy != nil){
+					se.strategy.UpdateTrailingStop(symbol, t)
+				}
 				continue
 			case c := <-candleCh:
 				se.priceActionStore.IngestCandle(symbol, c)
