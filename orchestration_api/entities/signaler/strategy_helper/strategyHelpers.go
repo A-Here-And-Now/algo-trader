@@ -196,3 +196,12 @@ func MaxSlice(slice []float64, from, to int) float64 {
 	}
 	return m
 }
+
+func GetSign(f float64) float64 {
+	if f > 0 {
+		return 1
+	} else if f < 0 {
+		return -1
+	}
+	return 0
+}

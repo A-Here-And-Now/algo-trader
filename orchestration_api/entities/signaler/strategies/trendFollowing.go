@@ -9,37 +9,49 @@ import (
 	talib "github.com/markcheno/go-talib"
 )
 
-type TrendFollowingStrategy struct{ *helper.PositionHolder }
+type TrendFollowingStrategy struct{ 
+	*helper.PositionHolder 
+	MaType           string
+	ShortMALen       int
+	LongMALen        int
+	BbLen            int
+	BbMul            float64
+	RsiLen           int
+	RsiLongTh        float64
+	RsiShortTh       float64
+	MacdFastLen      int
+	MacdSlowLen      int
+	MacdSignalLen    int
+	StochLen         int
+	StochSmooth      int
+	StochOverbought  float64
+	StochOversold    float64
+	AdxLen           int
+	AdxThreshold     float64
+	TsAtrMult        float64
+	TpAtrMult        float64
+}
 
-func (s *TrendFollowingStrategy) CalculateSignal(symbol string,
-	priceStore helper.IPriceActionStore) models.Signal {
-
-	// ---------- MA (moving‑average) ----------
-	const (
-		maType     = "SMA" // the script default is SMA
-		shortMALen = 9
-		longMALen  = 21
-	)
-
-	// ---------- Fixed indicator parameters ----------
-	const (
-		atrLen          = 14
-		bbLen           = 20
-		bbMul           = 2.0
-		rsiLen          = 14
-		rsiLongTh       = 55.0
-		rsiShortTh      = 45.0
-		macdFastLen     = 12
-		macdSlowLen     = 26
-		macdSignalLen   = 9
-		stochLen        = 14
-		stochSmooth     = 3
-		stochOverbought = 80.0
-		stochOversold   = 20.0
-		adxLen          = 14
-		adxThreshold    = 25.0
-	)
-
+func (s *TrendFollowingStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
+	maType := s.MaType
+	shortMALen := s.ShortMALen
+	longMALen := s.LongMALen
+	bbLen := s.BbLen
+	bbMul := s.BbMul
+	rsiLen := s.RsiLen
+	rsiLongTh := s.RsiLongTh
+	rsiShortTh := s.RsiShortTh
+	macdFastLen := s.MacdFastLen
+	macdSlowLen := s.MacdSlowLen
+	macdSignalLen := s.MacdSignalLen
+	stochLen := s.StochLen
+	stochSmooth := s.StochSmooth
+	stochOverbought := s.StochOverbought
+	stochOversold := s.StochOversold
+	adxLen := s.AdxLen
+	adxThreshold := s.AdxThreshold
+	tsAtrMult := s.TsAtrMult
+	tpAtrMult := s.TpAtrMult
 	// --------------------------------------------------------------
 	// 1️⃣  Pull the merged candle history (exactly what the script uses)
 	// --------------------------------------------------------------
@@ -134,22 +146,33 @@ func (s *TrendFollowingStrategy) CalculateSignal(symbol string,
 	sellFiltered := sellCross &&
 		volatilityFilter && bbTrendShort && rsiShort && macdShort && stochShort && adxOk
 
-	// --------------------------------------------------------------
-	// 5️⃣  Return the appropriate enum.Signal
-	// --------------------------------------------------------------
-	if buyFiltered && !s.State[symbol].InPosition {
+	state := s.PositionHolder.State[symbol]
+	inPosition := state.InPosition
+	trailingStop := closes[i] - tsAtrMult * atrVals[i]
+	takeProfit := closes[i] + tpAtrMult * atrVals[i]
+
+	if buyFiltered && !inPosition {
 		return models.Signal{
 			Symbol:  symbol,
 			Type:    enum.SignalBuy,
 			Percent: 100, // you can keep the same % as the original script
 			Time:    time.Now(),
+			TrailingStop: trailingStop,
+			TakeProfit:   takeProfit,
+			Price:        closes[i],
 		}
-	} else if sellFiltered && s.State[symbol].InPosition {
-		return models.Signal{
-			Symbol:  symbol,
-			Type:    enum.SignalSell,
-			Percent: 100,
-			Time:    time.Now(),
+	} 
+	if inPosition {
+		isReachedTakeProfit := closes[i] >= s.PositionHolder.State[symbol].TakeProfit
+		isReachedTrailingStop := closes[i] <= s.PositionHolder.State[symbol].TrailingStop
+		if isReachedTakeProfit || isReachedTrailingStop || sellFiltered {
+			return models.Signal{
+				Symbol:  symbol,
+				Type:    enum.SignalSell,
+				Percent: 100,
+				Time:    time.Now(),
+				Price:   closes[i],	
+			}
 		}
 	}
 

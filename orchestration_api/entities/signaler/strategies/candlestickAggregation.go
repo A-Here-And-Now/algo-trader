@@ -10,42 +10,24 @@ import (
 	talib "github.com/markcheno/go-talib"
 )
 
-type CandlestickAggregationStrategy struct{ *helper.PositionHolder }
+type CandlestickAggregationStrategy struct{ 
+	*helper.PositionHolder 
+	TsAtrMult float64
+	TpAtrMult float64
+	AtrLen    int
+	MaLen     int
+	HigherTfmALen int
+	VolumeMALen int
+	VolumeSpikeMul float64
+	LongBodyAtrMul float64
+	SmallBodyAtrMul float64
+	MinPatternStrength float64
+	MinAvgStrength float64
+	SrTolerancePerc float64
+	SwingPivotLength int
+}
 
 func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
-
-	const (
-		// Trend‑MA filter
-		maLength      = 20
-		higherTF      = "D" // higher timeframe for the HTF trend filter
-		higherTFMALen = 50
-
-		// Support / Resistance
-		swingPivotLength = 10
-		srTolerancePerc  = 0.01
-
-		// Volume filter
-		volumeMALen    = 20
-		volumeSpikeMul = 1.5
-
-		// ATR filter for candle body size
-		atrLen          = 14
-		longBodyAtrMul  = 0.8
-		smallBodyAtrMul = 0.3
-
-		// Confirmation thresholds
-		minAvgStrength     = 7.0
-		minPatternStrength = 5.0
-
-		// Take‑Profit / Stop‑Loss (expressed as % → we keep them as constants but they are *not* used by the aggregation strategy)
-		tpPerc = 0.05 // 5 %
-		slPerc = 0.02 // 2 %
-
-		// Back‑test date range (hard‑coded, but the aggregation strategy never uses it – we keep it only for completeness)
-		// startDate = timestamp("01 Jan 2020 00:00 UTC")
-		// endDate   = timestamp("31 Dec 2025 23:59 UTC")
-	)
-
 	// --------------------------------------------------------------
 	// 1️⃣  Pull merged candle history (the same series the Pine‑Script uses)
 	// --------------------------------------------------------------
@@ -74,14 +56,14 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// --------------------------------------------------------------
 	// 2️⃣  Indicator calculations (identical to the Pine‑Script)
 	// --------------------------------------------------------------
-	atrVals := talib.Atr(highs, lows, closes, atrLen)
+	atrVals := talib.Atr(highs, lows, closes, s.AtrLen)
 	atr := atrVals[len(atrVals)-1]
 
 	// Volume SMA (for the volume‑spike filter)
-	volMA := talib.Sma(vols, volumeMALen)
+	volMA := talib.Sma(vols, s.VolumeMALen)
 	volMAVal := volMA[len(volMA)-1]
 	// Trend MA (simple SMA – the script uses sma)
-	trendMA := talib.Sma(closes, maLength)
+	trendMA := talib.Sma(closes, s.MaLen)
 	trendMAVal := trendMA[len(trendMA)-1]
 
 	// Higher‑timeframe MA (we approximate it by re‑sampling the same series
@@ -89,17 +71,17 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// series from the store; for the purpose of this port we just reuse the
 	// same data and treat it as if it were the higher TF.)
 	// In a real implementation you would call a separate request for TF‑D.
-	htfMA := talib.Sma(closes, higherTFMALen)
+	htfMA := talib.Sma(closes, s.HigherTfmALen)
 	htfMAVal := htfMA[len(htfMA)-1]
 
 	// ----- Trend, volume & S/R filters -----
 	isUptrend := closes[i] > trendMAVal
 	isDowntrend := closes[i] < trendMAVal
 
-	isVolumeSpike := vols[len(vols)-1] > volMAVal*volumeSpikeMul
+	isVolumeSpike := vols[len(vols)-1] > volMAVal*s.VolumeSpikeMul
 
 	// defined here because doji gets checked a lot in all pattern types
-	isDoji := helper.IsDoji(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.1)
+	isDoji := helper.IsDoji(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.1)
 
 	bullishPatternResults := make([]bool, 25)
 	bullishPatternStrengths := make([]float64, 25)
@@ -113,7 +95,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	bullishPatternResults[0] = helper.IsBearish(opens[i], closes[i]) &&
 		helper.IsSmallBody(opens[i], closes[i],
 			highs[i], lows[i],
-			atr, smallBodyAtrMul, 0.2) &&
+			atr, s.SmallBodyAtrMul, 0.2) &&
 		helper.LowerShadow(opens[i], closes[i], lows[i]) > 2*helper.BodySize(opens[i], closes[i]) &&
 		helper.UpperShadow(opens[i], closes[i], highs[i]) < 0.1*helper.CandleRange(highs[i], lows[i])
 
@@ -124,7 +106,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 
 	// 3. Piercing Line (Strength 8.0)
 	bullishPatternResults[2] = helper.IsBearish(opens[i1], closes[i1]) &&
-		helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+		helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 		helper.IsBullish(opens[i], closes[i]) &&
 		opens[i] < lows[i1] && // open gaps below prior low
 		closes[i] > (opens[i1]+closes[i1])/2 && // closes above 50 % of prior body
@@ -133,11 +115,11 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 4. Morning Star (Strength 7.0)
 	bullishPatternResults[3] =
 		helper.IsBearish(opens[i2], closes[i2]) &&
-			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, longBodyAtrMul, 0.6) &&
-			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, s.LongBodyAtrMul, 0.6) &&
+			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.SmallBodyAtrMul, 0.2) &&
 			opens[i1] < closes[i2] && // the tiny middle candle opens below prior close
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			closes[i] > (opens[i2]+closes[i2])/2 // closes above midpoint of first candle
 
 	// 5. Three White Soldiers (Strength 9.0)
@@ -153,16 +135,16 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 
 	// 6. Inverted Hammer (Strength 6.0)
 	bullishPatternResults[5] = helper.IsBearish(opens[i], closes[i]) &&
-		helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.2) &&
+		helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.2) &&
 		helper.UpperShadow(opens[i], closes[i], highs[i]) > 2*helper.BodySize(opens[i], closes[i]) &&
 		helper.LowerShadow(opens[i], closes[i], lows[i]) < 0.1*helper.CandleRange(highs[i], lows[i])
 
 	// 7. Bullish Harami (Strength 6.0)
 	bullishPatternResults[6] =
 		helper.IsBearish(opens[i1], closes[i1]) &&
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.25) &&
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.25) &&
 			helper.IsHaramiStrict(opens[i], closes[i], highs[i], lows[i],
 				opens[i1], closes[i1], highs[i1], lows[i1])
 	isHaramiBull := bullishPatternResults[6]
@@ -170,13 +152,13 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 8. Rising Three (Strength 8.0)
 	bullishPatternResults[7] =
 		helper.IsBullish(opens[i4], closes[i4]) &&
-			helper.IsLongBody(opens[i4], closes[i4], highs[i4], lows[i4], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i4], closes[i4], highs[i4], lows[i4], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i3], closes[i3]) &&
 			helper.IsBearish(opens[i2], closes[i2]) &&
 			helper.IsBearish(opens[i1], closes[i1]) &&
 			closes[i1] > opens[i4] && // the first bullish candle is higher than the low‑bearish block
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			closes[i] > highs[i4]
 
 	// 9. Tweezer Bottom (Strength 6.0)
@@ -194,22 +176,22 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 11. Belt Hold Bull (Strength 6.0)
 	bullishPatternResults[10] =
 		helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			opens[i] == lows[i] // opens at the low of the candle
 
 	// 12. Matching Low (Strength 4.0)
 	bullishPatternResults[11] =
 		helper.IsBearish(opens[i1], closes[i1]) &&
-			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.SmallBodyAtrMul, 0.2) &&
 			helper.IsBearish(opens[i], closes[i]) &&
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.2) &&
 			closes[i] == closes[i1] && // identical closes
 			lows[i] == lows[i1] // identical lows
 
 	// 13. Three Inside Up (Strength 7.0)
 	bullishPatternResults[12] =
 		helper.IsBearish(opens[i2], closes[i2]) &&
-			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, s.LongBodyAtrMul, 0.6) &&
 			// The middle candle must be a bullish harami relative to the first
 			isHaramiBull && // we already computed it for bar i1
 			helper.IsBullish(opens[i], closes[i]) &&
@@ -236,10 +218,10 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 			helper.IsBearish(opens[i3], closes[i3]) &&
 			helper.IsBearish(opens[i2], closes[i2]) &&
 			helper.IsBearish(opens[i1], closes[i1]) &&
-			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.SmallBodyAtrMul, 0.2) &&
 			opens[i1] < closes[i2] && // middle candle opens inside previous body
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6)
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6)
 
 	// 17. Dragonfly Doji (Strength 8.0)
 	bullishPatternResults[16] =
@@ -259,26 +241,26 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 			closes[i1] < closes[i2] && // each close lower than the next
 			closes[i2] < closes[i3] &&
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			closes[i] > opens[i3] // final bullish candle closes above the open of the first bearish candle
 
 	// 20. Abandoned Baby Bull (Strength 10.0)
 	bullishPatternResults[19] =
 		helper.IsBearish(opens[i2], closes[i2]) &&
-			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, s.LongBodyAtrMul, 0.6) &&
 			// The middle candle must be a doji (the script uses `isDojiCandle[…]` on bar i‑1)
-			helper.IsDoji(opens[i1], closes[i1], highs[i1], lows[i1], atr, smallBodyAtrMul, 0.1) &&
+			helper.IsDoji(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.SmallBodyAtrMul, 0.1) &&
 			lows[i1] < lows[i2] && // doji’s low below prior low
 			highs[i1] < closes[i2] && // doji’s high below prior close
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			opens[i] > highs[i1] && // bullish candle opens above doji high
 			opens[i] > closes[i2]
 
 	// 21. Thrusting Line (Strength 4.0)
 	bullishPatternResults[20] =
 		helper.IsBearish(opens[i1], closes[i1]) &&
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBullish(opens[i], closes[i]) &&
 			opens[i] < closes[i1] && // opens inside prior body
 			closes[i] > closes[i1] && // closes above prior close
@@ -293,9 +275,9 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 23. Separating Lines Bull (Strength 6.0)
 	bullishPatternResults[22] =
 		helper.IsBullish(opens[i1], closes[i1]) && // previous bar bullish
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBullish(opens[i], closes[i]) && // current bar bullish
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			opens[i] == opens[i1] && // opens are exactly equal
 			opens[i] > closes[i1] // open is above prior close (upward gap)
 
@@ -313,9 +295,9 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 25. Hook Reversal Bull (Strength 6.0)
 	bullishPatternResults[24] =
 		helper.IsBullish(opens[i1], closes[i1]) && // previous bar bullish
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.25) &&
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.25) &&
 			opens[i] > closes[i1] && // opens above prior close
 			opens[i] < opens[i1] && // but below prior open (a “hook”)
 			closes[i] > highs[i1] // closes above prior high
@@ -337,7 +319,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 
 	// 1. Hanging Man (Strength 8.0)
 	bearishPatternResults[0] = helper.IsBullish(opens[i], closes[i]) &&
-		helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.2) &&
+		helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.2) &&
 		helper.LowerShadow(opens[i], closes[i], lows[i]) > 2*helper.BodySize(opens[i], closes[i]) &&
 		helper.UpperShadow(opens[i], closes[i], highs[i]) < 0.1*helper.CandleRange(highs[i], lows[i])
 
@@ -348,7 +330,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 
 	// 3. Dark Cloud Cover (Strength 8.0)
 	bearishPatternResults[2] = helper.IsBullish(opens[i1], closes[i1]) &&
-		helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+		helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 		helper.IsBearish(opens[i], closes[i]) &&
 		opens[i] > highs[i1] && // open gaps above prior high
 		closes[i] < (opens[i1]+closes[i1])/2 && // close below midpoint of prior body
@@ -357,11 +339,11 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 4. Evening Star (Strength 7.0)
 	bearishPatternResults[3] =
 		helper.IsBullish(opens[i2], closes[i2]) &&
-			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, longBodyAtrMul, 0.6) &&
-			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, s.LongBodyAtrMul, 0.6) &&
+			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.SmallBodyAtrMul, 0.2) &&
 			opens[i1] > closes[i2] && // middle candle opens above prior close
 			helper.IsBearish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			closes[i] < (opens[i2]+closes[i2])/2 // close below midpoint of the first candle
 
 	// 5. Three Black Crows (Strength 9.0)
@@ -384,16 +366,16 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 7. Shooting Star (Strength 6.0)
 	bearishPatternResults[6] =
 		helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.2) &&
 			helper.UpperShadow(opens[i], closes[i], highs[i]) > 2*helper.BodySize(opens[i], closes[i]) &&
 			helper.LowerShadow(opens[i], closes[i], lows[i]) < 0.1*helper.CandleRange(highs[i], lows[i])
 
 	// 8. Bearish Harami (Strength 6.0)
 	bearishPatternResults[7] =
 		helper.IsBullish(opens[i1], closes[i1]) &&
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i], closes[i]) &&
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.25) &&
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.25) &&
 			helper.IsHaramiStrict(opens[i], closes[i], highs[i], lows[i],
 				opens[i1], closes[i1], highs[i1], lows[i1])
 	isHaramiBear := bearishPatternResults[7]
@@ -401,13 +383,13 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 9. Falling Three (Strength 8.0)
 	bearishPatternResults[8] =
 		helper.IsBearish(opens[i4], closes[i4]) &&
-			helper.IsLongBody(opens[i4], closes[i4], highs[i4], lows[i4], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i4], closes[i4], highs[i4], lows[i4], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBullish(opens[i3], closes[i3]) &&
 			helper.IsBullish(opens[i2], closes[i2]) &&
 			helper.IsBullish(opens[i1], closes[i1]) &&
 			closes[i1] < opens[i4] && // the first bullish candle is lower than the low‑bearish block
 			helper.IsBearish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			closes[i] < lows[i4]
 
 	// 10. Tweezer Top (Strength 6.0)
@@ -425,22 +407,22 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 12. Belt Hold Bear (Strength 6.0)
 	bearishPatternResults[11] =
 		helper.IsBearish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			opens[i] == highs[i] // opens at the high of the candle
 
 	// 13. Matching High (Strength 4.0)
 	bearishPatternResults[12] =
 		helper.IsBullish(opens[i1], closes[i1]) &&
-			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.SmallBodyAtrMul, 0.2) &&
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.2) &&
 			closes[i] == closes[i1] && // identical closes
 			highs[i] == highs[i1] // identical highs
 
 	// 14. Three Inside Down (Strength 7.0)
 	bearishPatternResults[13] =
 		helper.IsBullish(opens[i2], closes[i2]) &&
-			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, s.LongBodyAtrMul, 0.6) &&
 			// middle candle must be a bearish harami relative to the first
 			isHaramiBear && // we already computed it for bar i1
 			helper.IsBearish(opens[i], closes[i]) &&
@@ -457,10 +439,10 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	bearishPatternResults[15] =
 		helper.IsBullish(opens[i2], closes[i2]) &&
 			helper.IsBullish(opens[i1], closes[i1]) &&
-			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.SmallBodyAtrMul, 0.2) &&
 			opens[i] > opens[i2] && // opens higher than the candle two bars ago
 			closes[i] > closes[i2] && // closes higher than the candle two bars ago
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.2)
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.2)
 
 	// 17. Descending Hawk (Strength 4.0)
 	bearishPatternResults[16] =
@@ -472,12 +454,12 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 18. Downside Tasuki Gap (Strength 6.0)
 	bearishPatternResults[17] =
 		helper.IsBearish(opens[i2], closes[i2]) &&
-			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i1], closes[i1]) &&
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			opens[i1] < closes[i2] && // second candle gaps down from first
 			helper.IsBullish(opens[i], closes[i]) &&
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.2) &&
 			opens[i] > closes[i1] && // bullish candle opens above prior close
 			opens[i] < opens[i1] && // but still inside the gap
 			closes[i] > opens[i1] && // and closes above the prior open
@@ -486,9 +468,9 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 19. Upside Gap Two Crows (Strength 8.0)
 	bearishPatternResults[18] =
 		helper.IsBullish(opens[i2], closes[i2]) &&
-			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i1], closes[i1]) &&
-			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, smallBodyAtrMul, 0.2) &&
+			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.SmallBodyAtrMul, 0.2) &&
 			opens[i1] > highs[i2] && // gap up between first and second candle
 			helper.IsBearish(opens[i], closes[i]) &&
 			closes[i] < opens[i1] && // third candle closes below second open
@@ -500,9 +482,9 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 21. Dark Cloud Cover (Weakened) (Strength 6.0)
 	bearishPatternResults[20] =
 		helper.IsBullish(opens[i1], closes[i1]) &&
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			opens[i] > highs[i1] && // open gaps above prior high
 			closes[i] <= (opens[i1]+closes[i1])/2 && // close ≤ 50 % of prior body
 			closes[i] > 0.75*opens[i1]+0.25*closes[i1] // close > 75 %‑weighted average (as in the script)
@@ -516,9 +498,9 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 23. Separating Lines Bear (Strength 6.0)
 	bearishPatternResults[22] =
 		helper.IsBearish(opens[i1], closes[i1]) && // previous bar bearish
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i], closes[i]) && // current bar bearish
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			opens[i] == opens[i1] && // opens exactly equal
 			opens[i] < closes[i1] // open below prior close (downward gap)
 
@@ -531,15 +513,15 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 			helper.IsBearish(opens[i1], closes[i1]) && // third candle bearish (no body check needed)
 			opens[i1] < lows[i2] && // open below prior low (the “concealing” gap)
 			helper.IsBearish(opens[i], closes[i]) &&
-			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i], atr, s.LongBodyAtrMul, 0.6) &&
 			opens[i] < closes[i1] // final bearish candle closes below prior close
 
 	// 25. Hook Reversal Bear (Strength 6.0)
 	bearishPatternResults[24] =
 		helper.IsBullish(opens[i1], closes[i1]) && // previous bar bullish
-			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, longBodyAtrMul, 0.6) &&
+			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1], atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i], closes[i]) &&
-			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, smallBodyAtrMul, 0.25) &&
+			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i], atr, s.SmallBodyAtrMul, 0.25) &&
 			opens[i] < closes[i1] && // opens below prior close
 			opens[i] > opens[i1] && // but above prior open (the “hook”)
 			closes[i] < lows[i1] // closes below prior low
@@ -580,7 +562,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// 4. Spinning Top (Strength 4.0)
 	neutralPatternResults[3] =
 		helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-			atr, smallBodyAtrMul, 0.25) &&
+			atr, s.SmallBodyAtrMul, 0.25) &&
 			// both shadows ≥ 20 % of the total range
 			helper.IsLongShadowPercent(helper.UpperShadow(opens[i], closes[i], highs[i]),
 				helper.CandleRange(highs[i], lows[i]), 0.2) &&
@@ -596,7 +578,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	neutralPatternResults[5] =
 		helper.IsBullish(opens[i1], closes[i1]) && // previous bullish candle
 			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			isDoji && // current candle is a doji
 			helper.IsHaramiStrict(opens[i], closes[i], highs[i], lows[i],
 				opens[i1], closes[i1], highs[i1], lows[i1])
@@ -605,7 +587,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	neutralPatternResults[6] =
 		helper.IsBearish(opens[i1], closes[i1]) && // previous bearish candle
 			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			isDoji && // current candle is a doji
 			helper.IsHaramiStrict(opens[i], closes[i], highs[i], lows[i],
 				opens[i1], closes[i1], highs[i1], lows[i1])
@@ -620,7 +602,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 			// third candle (bearish) that closes within the gap
 			helper.IsBearish(opens[i], closes[i]) &&
 			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-				atr, smallBodyAtrMul, 0.25) &&
+				atr, s.SmallBodyAtrMul, 0.25) &&
 			opens[i] < closes[i1] && // open below previous close
 			opens[i] > opens[i1] && // but still inside the gap
 			closes[i] > opens[i1] && // close above previous open
@@ -631,11 +613,11 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 		// prior bearish candle with long body
 		helper.IsBearish(opens[i1], closes[i1]) &&
 			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			// current bullish candle with very small body (doji‑like) near the prior low
 			helper.IsBullish(opens[i], closes[i]) &&
 			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-				atr, smallBodyAtrMul, 0.25) &&
+				atr, s.SmallBodyAtrMul, 0.25) &&
 			opens[i] < lows[i1] && // opens below prior low (gap down)
 			math.Abs(closes[i]-closes[i1])/mintick < 2 // close within 2 ticks of prior close
 
@@ -644,11 +626,11 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 		// prior bearish candle with long body
 		helper.IsBearish(opens[i1], closes[i1]) &&
 			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			// current bullish candle, again tiny body
 			helper.IsBullish(opens[i], closes[i]) &&
 			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-				atr, smallBodyAtrMul, 0.25) &&
+				atr, s.SmallBodyAtrMul, 0.25) &&
 			opens[i] < lows[i1] && // opens below prior low
 			closes[i] > closes[i1] && // closes above prior close
 			// final condition: close is within 10 % of the prior body length
@@ -676,11 +658,11 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 		// prior bearish long candle
 		helper.IsBearish(opens[i1], closes[i1]) &&
 			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			// current bullish candle that is a small‑body harami inside the previous candle
 			helper.IsBullish(opens[i], closes[i]) &&
 			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-				atr, smallBodyAtrMul, 0.25) &&
+				atr, s.SmallBodyAtrMul, 0.25) &&
 			helper.IsHaramiStrict(opens[i], closes[i], highs[i], lows[i],
 				opens[i1], closes[i1], highs[i1], lows[i1])
 
@@ -703,30 +685,30 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 		// prior bearish long candle
 		helper.IsBearish(opens[i1], closes[i1]) &&
 			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			// current bullish candle that closes at the same price (within 2 ticks)
 			helper.IsBullish(opens[i], closes[i]) &&
 			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			math.Abs(closes[i]-closes[i1])/mintick < 2
 
 	// 17. Counterattack Bear (Neutral) (Strength 4.0)
 	neutralPatternResults[16] =
 		helper.IsBullish(opens[i1], closes[i1]) &&
 			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i], closes[i]) &&
 			helper.IsLongBody(opens[i], closes[i], highs[i], lows[i],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			math.Abs(closes[i]-closes[i1])/mintick < 2
 
 	// 18. Three Stars in the South (Neutral) (Strength 4.0)
 	// (All three candles are tiny dojis with long shadows)
 	neutralPatternResults[17] =
 		helper.IsDoji(opens[i2], closes[i2], highs[i2], lows[i2],
-			atr, smallBodyAtrMul, 0.1) &&
+			atr, s.SmallBodyAtrMul, 0.1) &&
 			helper.IsDoji(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, smallBodyAtrMul, 0.1) &&
+				atr, s.SmallBodyAtrMul, 0.1) &&
 			isDoji &&
 			// each candle’s upper shadow ≥ 30 % of total range
 			helper.IsLongShadowPercent(helper.UpperShadow(opens[i2], closes[i2], highs[i2]),
@@ -740,9 +722,9 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// (Same as the South version but with long lower shadows)
 	neutralPatternResults[18] =
 		helper.IsDoji(opens[i2], closes[i2], highs[i2], lows[i2],
-			atr, smallBodyAtrMul, 0.1) &&
+			atr, s.SmallBodyAtrMul, 0.1) &&
 			helper.IsDoji(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, smallBodyAtrMul, 0.1) &&
+				atr, s.SmallBodyAtrMul, 0.1) &&
 			isDoji &&
 			helper.IsLongShadowPercent(helper.LowerShadow(opens[i2], closes[i2], lows[i2]),
 				helper.CandleRange(highs[i2], lows[i2]), 0.3) &&
@@ -755,7 +737,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// Very small body + both shadows ≥ 40 % of range
 	neutralPatternResults[19] =
 		helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-			atr, smallBodyAtrMul, 0.1) &&
+			atr, s.SmallBodyAtrMul, 0.1) &&
 			helper.IsLongShadowPercent(helper.UpperShadow(opens[i], closes[i], highs[i]),
 				helper.CandleRange(highs[i], lows[i]), 0.4) &&
 			helper.IsLongShadowPercent(helper.LowerShadow(opens[i], closes[i], lows[i]),
@@ -766,14 +748,14 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 		// three consecutive bullish long‑body candles
 		helper.IsBullish(opens[i2], closes[i2]) &&
 			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBullish(opens[i1], closes[i1]) &&
 			helper.IsLongBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBullish(opens[i], closes[i]) &&
 			// the current candle has a *small* body & a long upper shadow (price stalled upward)
 			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-				atr, smallBodyAtrMul, 0.15) &&
+				atr, s.SmallBodyAtrMul, 0.15) &&
 			helper.IsLongShadowPercent(helper.UpperShadow(opens[i], closes[i], highs[i]),
 				helper.CandleRange(highs[i], lows[i]), 0.5)
 
@@ -781,7 +763,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	neutralPatternResults[21] =
 		helper.IsBullish(opens[i3], closes[i3]) &&
 			helper.IsLongBody(opens[i3], closes[i3], highs[i3], lows[i3],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			// two successive gaps up
 			helper.IsBullish(opens[i2], closes[i2]) &&
 			opens[i2] > highs[i3] && // first gap up
@@ -795,7 +777,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	neutralPatternResults[22] =
 		helper.IsBearish(opens[i3], closes[i3]) &&
 			helper.IsLongBody(opens[i3], closes[i3], highs[i3], lows[i3],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			// two successive gaps down
 			helper.IsBearish(opens[i2], closes[i2]) &&
 			opens[i2] < lows[i3] && // first gap down
@@ -818,7 +800,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// Small body, very long shadows on **both** sides
 	neutralPatternResults[24] =
 		helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-			atr, smallBodyAtrMul, 0.1) &&
+			atr, s.SmallBodyAtrMul, 0.1) &&
 			helper.IsLongShadowPercent(helper.UpperShadow(opens[i], closes[i], highs[i]),
 				helper.CandleRange(highs[i], lows[i]), 0.3) &&
 			helper.IsLongShadowPercent(helper.LowerShadow(opens[i], closes[i], lows[i]),
@@ -829,7 +811,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	neutralPatternResults[25] =
 		helper.IsBullish(opens[i], closes[i]) &&
 			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-				atr, smallBodyAtrMul, 0.1) &&
+				atr, s.SmallBodyAtrMul, 0.1) &&
 			opens[i] > highs[i1]
 
 	// 27. One‑Bar Reversal Bear (Neutral) (Strength 3.0)
@@ -837,7 +819,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	neutralPatternResults[26] =
 		helper.IsBearish(opens[i], closes[i]) &&
 			helper.IsSmallBody(opens[i], closes[i], highs[i], lows[i],
-				atr, smallBodyAtrMul, 0.1) &&
+				atr, s.SmallBodyAtrMul, 0.1) &&
 			opens[i] < lows[i1]
 
 	// 28. Three Gap Up (Neutral) (Strength 3.0)
@@ -859,10 +841,10 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	neutralPatternResults[29] =
 		helper.IsBullish(opens[i2], closes[i2]) &&
 			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsBearish(opens[i1], closes[i1]) &&
 			helper.IsSmallBody(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, smallBodyAtrMul, 0.2) &&
+				atr, s.SmallBodyAtrMul, 0.2) &&
 			helper.IsBearish(opens[i], closes[i]) &&
 			opens[i] > closes[i1] && // third candle opens above prior close
 			opens[i] < opens[i1] && // but still inside the gap
@@ -873,10 +855,10 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 		// prior bearish long candle
 		helper.IsBearish(opens[i2], closes[i2]) &&
 			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			// middle doji that gaps down
 			helper.IsDoji(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, smallBodyAtrMul, 0.1) &&
+				atr, s.SmallBodyAtrMul, 0.1) &&
 			opens[i1] < lows[i2] && // gap down
 			// final bullish candle that closes above the midpoint of the first candle
 			helper.IsBullish(opens[i], closes[i]) &&
@@ -887,9 +869,9 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	neutralPatternResults[31] =
 		helper.IsBullish(opens[i2], closes[i2]) &&
 			helper.IsLongBody(opens[i2], closes[i2], highs[i2], lows[i2],
-				atr, longBodyAtrMul, 0.6) &&
+				atr, s.LongBodyAtrMul, 0.6) &&
 			helper.IsDoji(opens[i1], closes[i1], highs[i1], lows[i1],
-				atr, smallBodyAtrMul, 0.1) &&
+				atr, s.SmallBodyAtrMul, 0.1) &&
 			opens[i1] > highs[i2] && // gap up
 			helper.IsBearish(opens[i], closes[i]) &&
 			opens[i] < opens[i1] && // open below the doji
@@ -922,7 +904,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// ----- bullish aggregate -----
 	bullishCount, bullishStrengthSum := 0, 0.0
 	for i := 0; i < len(bullishPatternResults); i++ {
-		if bullishPatternResults[i] && bullishPatternStrengths[i] >= minPatternStrength {
+		if bullishPatternResults[i] && bullishPatternStrengths[i] >= s.MinPatternStrength {
 			bullishCount++
 			bullishStrengthSum += bullishPatternStrengths[i]
 		}
@@ -935,7 +917,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// ----- bearish aggregate -----
 	bearishCount, bearishStrengthSum := 0, 0.0
 	for i := 0; i < len(bearishPatternResults); i++ {
-		if bearishPatternResults[i] && bearishPatternStrengths[i] >= minPatternStrength {
+		if bearishPatternResults[i] && bearishPatternStrengths[i] >= s.MinPatternStrength {
 			bearishCount++
 			bearishStrengthSum += bearishPatternStrengths[i]
 		}
@@ -948,7 +930,7 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// ----- neutral aggregate -----
 	neutralCount, neutralStrengthSum := 0, 0.0
 	for i := 0; i < len(neutralPatternResults); i++ {
-		if neutralPatternResults[i] && neutralPatternStrengths[i] >= minPatternStrength {
+		if neutralPatternResults[i] && neutralPatternStrengths[i] >= s.MinPatternStrength {
 			neutralCount++
 			neutralStrengthSum += neutralPatternStrengths[i]
 		}
@@ -961,9 +943,9 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	// Support / resistance pivots (simple approximation – we just look at the most recent pivot)
 	// In Pine‑Script `ta.pivothigh(high, swingPivotLength, swingPivotLength)` returns a series
 	// that is `na` except on the pivot bar. We emulate it by scanning backwards.
-	_, pl := helper.GetHLPivot(highs, lows, swingPivotLength)
+	_, pl := helper.GetHLPivot(highs, lows, s.SwingPivotLength)
 
-	isNearSupport := !math.IsNaN(pl) && closes[i] >= pl*(1-srTolerancePerc) && closes[i] <= pl*(1+srTolerancePerc)
+	isNearSupport := !math.IsNaN(pl) && closes[i] >= pl*(1-s.SrTolerancePerc) && closes[i] <= pl*(1+s.SrTolerancePerc)
 	// isNearResistance := !math.IsNaN(ph) && closes[i] <= ph*(1+srTolerancePerc) && closes[i] >= ph*(1-srTolerancePerc)
 
 	// Follow‑through filter (we use the same rule as the script)
@@ -974,19 +956,22 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 	isHTFUp := closes[i] > htfMAVal
 	// isHTFDown := closes[i] < htfMAVal
 
-	longSignal := avgBullishStrength >= minAvgStrength &&
-		avgBearishStrength < minAvgStrength &&
+	longSignal := avgBullishStrength >= s.MinAvgStrength &&
+		avgBearishStrength < s.MinAvgStrength &&
 		isUptrend && isVolumeSpike && isNearSupport && isFollowThroughBull && isHTFUp
 
 	// shortSignal := avgBearishStrength >= minAvgStrength &&
 	// 	avgBullishStrength < minAvgStrength &&
 	// 	isDowntrend && isVolumeSpike && isNearResistance && isFollowThroughBear && isHTFDown
 
-	exitLong := (avgBearishStrength >= minAvgStrength && isDowntrend) ||
-		(avgNeutralStrength >= minAvgStrength)
-
+	exitLong := (avgBearishStrength >= s.MinAvgStrength && isDowntrend) ||
+		(avgNeutralStrength >= s.MinAvgStrength)
+	
 	// exitShort := (avgBullishStrength >= minAvgStrength && isUptrend) ||
 	// 	(avgNeutralStrength >= minAvgStrength)
+		
+	trailingStop := closes[i] - s.TsAtrMult*atrVals[i]
+	takeProfit := closes[i] + s.TpAtrMult*atrVals[i]
 
 	if longSignal && !s.State[symbol].InPosition { // || (s.state[symbol].inPosition && exitShort)
 		return models.Signal{
@@ -994,14 +979,24 @@ func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceSto
 			Type:    enum.SignalBuy,
 			Percent: avgBullishStrength, // you can map this to any % you want
 			Time:    time.Now(),
+			TrailingStop: trailingStop,
+			TakeProfit:   takeProfit,
+			Price:        closes[i],
 		}
 	}
-	if s.State[symbol].InPosition && exitLong { // (shortSignal && !s.state[symbol].inPosition) ||
-		return models.Signal{
-			Symbol:  symbol,
-			Type:    enum.SignalSell,
-			Percent: 100,
-			Time:    time.Now(),
+
+	if s.State[symbol].InPosition {
+		state := s.PositionHolder.State[symbol]
+		isReachedTP := closes[i] >= state.TakeProfit
+		isReachedStop := closes[i] <= state.TrailingStop
+		if exitLong || isReachedTP || isReachedStop {
+			return models.Signal{
+				Symbol:  symbol,
+				Type:    enum.SignalSell,
+				Percent: 100,
+				Time:    time.Now(),
+				Price:   closes[i],
+			}
 		}
 	}
 

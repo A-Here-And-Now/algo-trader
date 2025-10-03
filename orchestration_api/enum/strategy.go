@@ -13,7 +13,7 @@ const (
 	HeikenAshi                      // https://www.tradingview.com/script/EdeSmT9i-Mutanabby-AI-ATR-Trend-Following-Strategy/
 	TurtleTrader                    // https://www.tradingview.com/script/4IWFtUWm-Donchian-Fibonacci-Trading-Tool/ also see orchestration_api/TurtleTrading.md
 	TrendlineBreakout               // https://www.tradingview.com/script/grMQIRAr-Trendline-Breakout-Strategy-KedArc-Quant/
-	Supertrend                      // https://www.tradingview.com/script/r6dAP7yi/ and https://www.tradingview.com/script/Y0KEwo8o-script-algo-orb-strategy-with-filters/
+	Supertrend                      // https://www.tradingview.com/script/r6dAP7yi/ + a simple volume filter
 	GroverLlorensActivator          // https://www.tradingview.com/script/VuYM89Tw-Grover-Llorens-Activator-Strategy-Analysis/
 )
 
