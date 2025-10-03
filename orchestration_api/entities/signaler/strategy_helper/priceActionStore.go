@@ -61,6 +61,7 @@ func NewStore(strategy enum.Strategy) *PriceActionStore {
 		periodLength:            2 * time.Hour,
 		numShortEmaPeriods:      12,
 		numLongEmaPeriods:       26,
+		strategy:                strategy,
 	}
 
 	return &store

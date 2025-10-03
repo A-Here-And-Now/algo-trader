@@ -18,21 +18,14 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// type ProfitLossUpdate struct {
-// 	Symbol     string
-// 	ProfitLoss float64
-// }
-
-// Manager holds a map of active traders keyed by a user‑supplied ID.
 type Manager struct {
-	mu           sync.RWMutex    // protects the map
-	ctx          context.Context // lifecycle context for manager
-	wg           sync.WaitGroup  // wait for all traders to stop
+	mu           sync.RWMutex 
+	ctx          context.Context
+	wg           sync.WaitGroup
 	Cfg          ManagerCfg
 	updates      chan ManagerCfg
 	marketDataWS *websocket.Conn
 	userDataWS   *websocket.Conn
-	// profitLossUpdates    chan ProfitLossUpdate
 	profitLossTotal      float64
 	engine               *signaler.SignalEngine
 	traderResources      map[string]*trader.TraderResource
@@ -58,12 +51,9 @@ func (m *Manager) GetStrategy() enum.Strategy {
 }
 
 var wsUpgrader = websocket.Upgrader{
-	// In dev you usually want to allow any origin.
-	// In production lock this down to your domain.
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// NewManager builds an empty manager.
 func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.Context, apiKey string, apiSecret string, tokens []string) *Manager {
 	updates := make(chan ManagerCfg)
 
@@ -75,7 +65,6 @@ func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.
 		},
 		ctx:     ctx,
 		updates: updates,
-		// profitLossUpdates:    make(chan ProfitLossUpdate, 256),
 		traderResources:      make(map[string]*trader.TraderResource),
 		marketPriceResources: make(map[string]*models.FrontEndResource),
 		subscriptionChannel:  make(chan string),
@@ -86,19 +75,14 @@ func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.
 		tokens:               tokens,
 	}
 
-	// init REST client
 	manager.client = coinbase.NewCoinbaseClient("https://api.coinbase.com", apiKey, apiSecret)
 
-	// init and start signal engine
 	manager.engine = signaler.NewSignalEngine(manager.ctx, strategy)
-	manager.engine.Start()
 
 	go func() {
 		for {
 			select {
 			case manager.Cfg = <-updates:
-			// case profitLossUpdate := <-manager.profitLossUpdates:
-			// 	manager.profitLossTotalForToday += profitLossUpdate.ProfitLoss
 			case <-manager.ctx.Done():
 				return
 			default:
@@ -163,19 +147,16 @@ func (m *Manager) StopAll() {
 	m.traderResources = make(map[string]*trader.TraderResource)
 	m.mu.Unlock()
 
-	// Stop all traders concurrently
 	for _, t := range traders {
 		_ = m.Stop(t.Cfg.Symbol)
 	}
 
-	// Optional: wait for all async Stop goroutines to finish
 	doneCh := make(chan struct{})
 	go func() {
 		m.wg.Wait()
 		close(doneCh)
 	}()
 
-	// Optionally, enforce a global timeout for all stops
 	select {
 	case <-doneCh:
 		log.Println("All traders stopped cleanly")
@@ -184,17 +165,13 @@ func (m *Manager) StopAll() {
 	}
 }
 
-// Start creates a new trader goroutine.
-// Returns an error if a trader with the same id is already running.
 func (m *Manager) Start(tokenStr string) error {
 	if _, exists := m.safeGetTraderResources()[tokenStr]; exists {
 		return fmt.Errorf("trader %q already running", tokenStr)
 	}
 
-	// Create a cancellable context for this trader.
 	ctx, cancel := context.WithCancel(m.ctx)
 
-	// Channel that signals when the goroutine exits.
 	done := make(chan struct{})
 
 	var cfg trader.TradeCfg
@@ -202,22 +179,19 @@ func (m *Manager) Start(tokenStr string) error {
 
 	updates := make(chan trader.TradeCfg, 4)
 
-	// per-token channels
 	m.safeAddTraderResource(tokenStr, cfg, done, cancel, updates)
 
 	safeMarketPriceResources := m.safeGetMarketPriceResources()
-	// register with signal engine
+
 	m.engine.RegisterToken(tokenStr, m.traderResources[tokenStr].PriceFeedToSignalEngine, m.traderResources[tokenStr].CandleFeedToSignalEngine,
 		m.traderResources[tokenStr].SignalChan, safeMarketPriceResources[tokenStr].PriceHistory, safeMarketPriceResources[tokenStr].CandleHistory, safeMarketPriceResources[tokenStr].CandleHistory26Days)
 
 	m.RefreshTokenBalances()
 
-	// Build the trader and launch it in its own goroutine.
 	newTrader := trader.NewTrader(cfg, ctx, cancel, updates, m.traderResources[tokenStr].SignalChan, m.traderResources[tokenStr].OrderFeed, m.tokenBalances[tokenStr])
 	newTrader.CoinbaseClient = m.client
 
 	go func() {
-		// Ensure we close the done channel even on panic.
 		defer close(done)
 		newTrader.Run()
 	}()
@@ -228,8 +202,6 @@ func (m *Manager) Start(tokenStr string) error {
 	return nil
 }
 
-// Stop cancels a running trader and waits (with a timeout) for it to finish.
-// Returns an error if the trader does not exist.
 func (m *Manager) Stop(token string) error {
 	t, exists := m.safeGetTraderResources()[token]
 	if !exists {
@@ -240,7 +212,6 @@ func (m *Manager) Stop(token string) error {
 	m.safeRemoveTraderResource(token)
 	m.engine.UnregisterToken(token)
 
-	// Wait asynchronously in a goroutine
 	m.wg.Add(1)
 	go func(tr *trader.TraderResource) {
 		defer m.wg.Done()
@@ -248,10 +219,8 @@ func (m *Manager) Stop(token string) error {
 		select {
 		case <-tr.Done:
 			log.Printf("trader %q stopped cleanly", tr.Cfg.Symbol)
-			// Reallocate funds if manager context is still active
 			if m.ctx.Err() == nil {
 				m.reallocateFunds()
-
 			}
 		case <-time.After(19 * time.Second):
 			log.Printf("trader %q did not stop within timeout - need to pull active positions from exchange upon restart", tr.Cfg.Symbol)
@@ -313,7 +282,6 @@ func (m *Manager) GetAllCandleHistory() map[string][]models.Candle {
 	return allCandleHistory
 }
 
-// a function that will call stop all if the profit loss total for today is greater than the maxPL
 func (m *Manager) checkProfitLossTotalForToday() {
 	if m.profitLossTotal > float64(m.Cfg.maxPL) {
 		m.StopAll()

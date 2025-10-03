@@ -37,6 +37,8 @@ func NewSignalEngine(parent context.Context, strategy enum.Strategy) *SignalEngi
 }
 
 func (se *SignalEngine) UpdateStrategy(strategy enum.Strategy) {
+	se.mu.Lock()
+	defer se.mu.Unlock()
 	se.priceActionStore.UpdateStrategy(strategy)
 	se.strategy = NewStrategy(strategy)
 }
@@ -47,6 +49,7 @@ func (se *SignalEngine) RegisterToken(symbol string, priceFeed chan models.Ticke
 	defer se.mu.Unlock()
 	se.priceActionStore.AddToken(symbol, priceHistory, candleHistory, candleHistory26Days)
 	se.signalingResources[symbol] = NewSignalingResource(priceFeed, candleFeed, signalCh, priceHistory, candleHistory, candleHistory26Days)
+	go se.run(symbol)
 }
 
 // UnregisterToken removes channels and state for a token
@@ -57,81 +60,66 @@ func (se *SignalEngine) UnregisterToken(symbol string) {
 	se.priceActionStore.RemoveToken(symbol)
 }
 
-// Start launches the engine goroutine per token
-func (se *SignalEngine) Start() {
-	go se.run()
-}
-
 func (se *SignalEngine) Stop() {
 	se.cancel()
 }
 
-func (se *SignalEngine) run() {
-	// multiplex across dynamic set of channels; we build a snapshot periodically
-	// Simple approach: loop with short sleep and non-blocking reads from each channel
-	// while also checking timer conditions for signal generation
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
+func (se *SignalEngine) run(symbol string) {
 	for {
 		select {
 		case <-se.ctx.Done():
 			return
-		case <-ticker.C:
-			se.ingestOnceAndMaybeSignal()
+		default:
+			se.ingestOnceAndMaybeSignal(symbol)
 		}
 	}
 }
 
-func (se *SignalEngine) ingestOnceAndMaybeSignal() {
+func (se *SignalEngine) ingestOnceAndMaybeSignal(symbol string) {
 	se.mu.RLock()
-	// snapshot keys to avoid holding lock while reading channels
-	keys := make([]string, 0, len(se.signalingResources))
-	for k := range se.signalingResources {
-		keys = append(keys, k)
-	}
+	priceCh := se.signalingResources[symbol].priceFeed
+	candleCh := se.signalingResources[symbol].candleFeed
+	priceActionStore := se.priceActionStore
 	se.mu.RUnlock()
 
-	for _, symbol := range keys {
-		se.mu.RLock()
-		priceCh := se.signalingResources[symbol].priceFeed
-		candleCh := se.signalingResources[symbol].candleFeed
-		se.mu.RUnlock()
-
-		// drain non-blocking new data
-		drain: for drained := 0; drained < 10; drained++ { // cap to avoid infinite loops
-			select {
-			case t := <-priceCh:
-				se.priceActionStore.IngestPrice(symbol, t)
-				if (se.strategy != nil){
-					se.strategy.UpdateTrailingStop(symbol, t)
-				}
-				continue
-			case c := <-candleCh:
-				se.priceActionStore.IngestCandle(symbol, c)
-				continue
-			default:
-				break drain // break out since no data
+	// drain non-blocking new data
+	drain: for drained := 0; drained < 10; drained++ { // cap to avoid infinite loops
+		select {
+		case t := <-priceCh:
+			priceActionStore.IngestPrice(symbol, t)
+			if (se.strategy != nil){
+				se.strategy.UpdateTrailingStop(symbol, t)
 			}
+			continue
+		case c := <-candleCh:
+			priceActionStore.IngestCandle(symbol, c)
+			continue
+		default:
+			break drain // break out since no data
 		}
-
-		se.maybeEmitSignal(symbol)
 	}
+
+	se.maybeEmitSignal(symbol)
 }
 
 func (se *SignalEngine) maybeEmitSignal(symbol string) {
 	se.mu.RLock()
-	lastAt := se.signalingResources[symbol].lastSignalAt
-	signalCh := se.signalingResources[symbol].signalCh
+	signalingResource := se.signalingResources[symbol]
+	lastAt := signalingResource.lastSignalAt
+	signalCh := signalingResource.signalCh
+	strategy := se.strategy
+	priceActionStore := se.priceActionStore
 	se.mu.RUnlock()
 
 	if lastAt.Before(time.Now().Add(-1 * time.Minute)) {
-		signal := se.strategy.CalculateSignal(symbol, se.priceActionStore)
-		ticker := time.NewTicker(50 * time.Millisecond)
+		// TODO: should probably be running a unique signaler logic per token spun up in multiple distinct goroutines
+		signal := strategy.CalculateSignal(symbol, priceActionStore)
+		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()	
 		select {
 		case signalCh <- signal:
 			log.Printf("[SignalEngine %s] emitted %s %.2f%%\n", symbol, signal.Type.String(), signal.Percent)
-			se.strategy.ConfirmSignalDelivered(symbol, signal)
+			strategy.ConfirmSignalDelivered(symbol, signal)
 			se.mu.Lock()
 			se.signalingResources[symbol].lastSignalAt = time.Now()
 			se.mu.Unlock()
