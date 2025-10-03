@@ -20,7 +20,7 @@ type HeikenAshiStrategy struct {
 }
 
 func (s *HeikenAshiStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
-	hist := priceStore.GetCandleHistory(symbol)
+	hist := priceStore.GetFullMergedCandleHistory(symbol)
 	haCandles := hist.GetHeikenAshiCandleHistory()
 	haCloses := haCandles.GetHeikenAshiCloses()
 	haHighs := haCandles.GetHeikenAshiHighs()

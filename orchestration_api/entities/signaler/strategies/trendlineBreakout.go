@@ -21,7 +21,7 @@ type TrendlineBreakoutStrategy struct {
 }
 
 func (s *TrendlineBreakoutStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
-	hist := priceStore.GetCandleHistory(symbol)
+	hist := priceStore.GetFullMergedCandleHistory(symbol)
 	highs := hist.GetHighs()
 	lows := hist.GetLows()
 	closes := hist.GetCloses()
