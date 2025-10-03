@@ -98,6 +98,10 @@ I also have a couple extra items I didn't fully fledge out yet that will need to
 
 3. **Profit/loss monitoring**: I also need to add a little goroutine that will constantly monitor the profit/loss that has accumulated throughout the day and if that threshold is reached it will automatically shut off all trading activity
 
+3. **Non-local deployment**: I plan to get an AWS certification (unrelated to this project) so as such I will probably have good reason to try deploying this in a cloud environment so it doesn't have to run on my local machine all the time. Alternatively we could deploy it on vercel with a username/password, OAUTH, MFA
+
+5. **Port to Rust** I also plan to learn Rust soon, so I will probably port some of these modules to Rust and interact with them from the existing modules via an AWS lambda
+
 ---
 
 ## 🎯 Future Vision
