@@ -38,6 +38,10 @@ function isCandleMessage(msg: any): msg is IncomingCandle {
   return msg.type === "candle" && typeof msg.start === "number";
 }
 
+function isOrderMessage(msg: any): msg is Order {
+  return msg.type === "candle" && typeof msg.start === "number";
+}
+
 function getCandle(raw: IncomingCandle): Candle {
   return { ...raw, start: new Date(raw.start * 1000), startInSeconds: raw.start, index: raw.start };
 }
@@ -70,7 +74,10 @@ export default function Home() {
         updatePrice(raw.symbol, raw.price);
       } else if (isCandleMessage(raw)) {
         updateCandles(raw.symbol, getCandle(raw));
-      } else {
+      } else if (isOrderMessage(raw)) {
+
+      }
+      else {
         console.warn("Unknown message", raw);
       }
     };

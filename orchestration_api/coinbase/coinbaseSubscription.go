@@ -6,15 +6,14 @@ type CoinbaseSubscription struct {
 	Channel    string   `json:"channel"`
 }
 
-func GetMarketSubscriptionPayload(productIDs []string) []CoinbaseSubscription {
+func GetMarketSubscriptionPayload(productIDs []string, isUnsubscribe bool) []CoinbaseSubscription {
+	subType := "subscribe"
+	if isUnsubscribe {
+		subType = "unsubscribe"
+	}
 	return []CoinbaseSubscription{
 		{
-			Type:       "subscribe",
-			ProductIDs: productIDs,
-			Channel:    "ticker_batch",
-		},
-		{
-			Type:       "subscribe",
+			Type:       subType,
 			ProductIDs: productIDs,
 			Channel:    "candles",
 		},

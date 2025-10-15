@@ -1,28 +1,26 @@
-package strategy_helper
+package models
 
 import (
 	"log"
 	"math"
 	"strconv"
-
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 )
 
 type CandleHistory struct {
-	Candles []models.Candle
+	Candles []Candle
 }
 
 type RenkoCandleHistory struct {
-	RenkoCandles []models.RenkoCandle
+	RenkoCandles []RenkoCandle
 	LastCandlePrice float64
 	BrickSize float64
 }
 
 type HeikenAshiCandleHistory struct {
-	HeikenAshiCandles []models.HeikenAshiCandle
+	HeikenAshiCandles []HeikenAshiCandle
 }
 
-func NewCandleHistory(candles []models.Candle) *CandleHistory {
+func NewCandleHistory(candles []Candle) *CandleHistory {
 	return &CandleHistory{
 		Candles: candles,
 	}
@@ -35,7 +33,7 @@ func (c *CandleHistory) GetHeikenAshiCandleHistory() HeikenAshiCandleHistory {
 		}
 	}
 
-	haCandles := make([]models.HeikenAshiCandle, len(c.Candles))
+	haCandles := make([]HeikenAshiCandle, len(c.Candles))
 
 	// First candle special case
 	first := c.Candles[0]
@@ -44,7 +42,7 @@ func (c *CandleHistory) GetHeikenAshiCandleHistory() HeikenAshiCandleHistory {
 	haHigh := math.Max(first.High, math.Max(haOpen, haClose))
 	haLow := math.Min(first.Low, math.Min(haOpen, haClose))
 
-	haCandles[0] = models.HeikenAshiCandle{
+	haCandles[0] = HeikenAshiCandle{
 		Start: first.Start,
 		Open:  haOpen,
 		Close: haClose,
@@ -62,7 +60,7 @@ func (c *CandleHistory) GetHeikenAshiCandleHistory() HeikenAshiCandleHistory {
 		haHigh = math.Max(c.High, math.Max(haOpen, haClose))
 		haLow = math.Min(c.Low, math.Min(haOpen, haClose))
 
-		haCandles[i] = models.HeikenAshiCandle{
+		haCandles[i] = HeikenAshiCandle{
 			Start: c.Start,
 			Open:  haOpen,
 			Close: haClose,
@@ -84,14 +82,14 @@ func (p *PriceActionStore) BuildRenkoCandleHistory(brickSize float64) {
 	for symbol, priceHistory := range p.priceHistory {
 		if len(priceHistory) == 0 {
 			newRenkoCandleHistory[symbol] = &RenkoCandleHistory{
-				RenkoCandles: make([]models.RenkoCandle, 0),
+				RenkoCandles: make([]RenkoCandle, 0),
 				LastCandlePrice: 0,
 				BrickSize: brickSize,
 			}
 			continue
 		}
 
-		var renkoCandles []models.RenkoCandle
+		var renkoCandles []RenkoCandle
 		lastClose, err := strconv.ParseFloat(priceHistory[0].Price, 64)
 		if err != nil {
 			log.Printf("RENKO ERROR: Failed to parse %s last close of %s: %v", symbol, priceHistory[0].Price, err)
@@ -120,8 +118,8 @@ func (p *PriceActionStore) BuildRenkoCandleHistory(brickSize float64) {
 	p.isRenkoCandleHistoryBuilt = true
 }
 
-func GetNewRenkoCandles(price float64, lastClose float64, brickSize float64) ([]models.RenkoCandle, float64) {
-	renkoCandles := make([]models.RenkoCandle, 0)
+func GetNewRenkoCandles(price float64, lastClose float64, brickSize float64) ([]RenkoCandle, float64) {
+	renkoCandles := make([]RenkoCandle, 0)
 	for math.Abs(price-lastClose) >= brickSize {
 		up := price > lastClose
 		var newClose float64
@@ -131,7 +129,7 @@ func GetNewRenkoCandles(price float64, lastClose float64, brickSize float64) ([]
 			newClose = lastClose - brickSize
 		}
 
-		renkoCandles = append(renkoCandles, models.RenkoCandle{
+		renkoCandles = append(renkoCandles, RenkoCandle{
 			Open:  price,
 			Close: newClose,
 		})

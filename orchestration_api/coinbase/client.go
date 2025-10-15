@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -105,19 +106,18 @@ func (c *CoinbaseClient) send(ctx context.Context, req *http.Request, v any) err
 	return nil
 }
 
-
-func (c *CoinbaseClient) GetHistoricalCandles(ctx context.Context, productID string) (CandlesResponse, error) {
+func (c *CoinbaseClient) GetHistoricalCandles(ctx context.Context, productID string, candleSize enum.CandleSize) (CandlesResponse, error) {
 	url := fmt.Sprintf("%s/api/v3/brokerage/market/products/%s/candles", c.baseURL, productID)
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
 
-	startUnix := time.Now().Add(-664 * time.Hour).Unix() // 26-ish days ago (should be 314 candles aka buckets)
+	startUnix := time.Now().Add(-100 * enum.GetTimeDurationFromCandleSize(candleSize)).Unix() // 26-ish days ago (should be 314 candles aka buckets)
 	endUnix := time.Now().Unix() 
 
 	// Convert the int64 values to strings for the URL query.
 	q := req.URL.Query()
 	q.Set("start", strconv.FormatInt(startUnix, 10))
 	q.Set("end", strconv.FormatInt(endUnix, 10))
-	q.Set("granularity", "TWO_HOUR")
+	q.Set("granularity", enum.GetCoinbaseGranularityFromCandleSize(candleSize))
 	req.URL.RawQuery = q.Encode()
 	var out CandlesResponse
 	return out, c.send(ctx, req, &out)

@@ -16,7 +16,6 @@ type PositionState struct {
 	TrailingStop              float64
 	LastTrailingStopPrice     float64
 	PositionIncreaseThreshold float64
-	PositionPct           	  float64
 }
 
 // Holds the map and the common ConfirmSignalDelivered implementation.
@@ -28,6 +27,23 @@ func NewPositionHolder() *PositionHolder {
 	return &PositionHolder{State: make(map[string]*PositionState)}
 }
 
+func NewInPositionState(signal models.Signal) *PositionState {
+	return &PositionState{
+		Side: signal.Type,
+		EntryPrice: signal.Price,
+		InPosition: signal.Type == enum.SignalBuy,
+		TakeProfit: signal.TakeProfit,
+		StopLoss: signal.StopLoss,
+		TrailingStop: signal.TrailingStop,
+		PositionIncreaseThreshold: signal.PositionIncreaseThreshold,
+		LastTrailingStopPrice: signal.LastTrailingStopPrice,
+	}
+}
+
+func NewPositionState(symbol string) *PositionState {
+	return &PositionState{ }
+}
+
 func (h *PositionHolder) ConfirmSignalDelivered(symbol string, signal models.Signal) {
 	if _, ok := h.State[symbol]; !ok {
 		h.State[symbol] = &PositionState{}
@@ -36,20 +52,9 @@ func (h *PositionHolder) ConfirmSignalDelivered(symbol string, signal models.Sig
 	h.State[symbol].EntryPrice = signal.Price
 	h.State[symbol].InPosition = signal.Type == enum.SignalBuy
 	if h.State[symbol].InPosition {
-		h.State[symbol].TakeProfit = signal.TakeProfit
-		h.State[symbol].StopLoss = signal.StopLoss
-		h.State[symbol].TrailingStop = signal.TrailingStop
-		h.State[symbol].PositionIncreaseThreshold = signal.PositionIncreaseThreshold
-		h.State[symbol].PositionPct += signal.Percent
-		h.State[symbol].LastTrailingStopPrice = signal.LastTrailingStopPrice
+		h.State[symbol] = NewInPositionState(signal)
 	} else {
-		h.State[symbol].PositionPct -= signal.Percent
-		h.State[symbol].TakeProfit = 0
-		h.State[symbol].StopLoss = 0
-		h.State[symbol].TrailingStop = 0
-		h.State[symbol].PositionIncreaseThreshold = 0
-		h.State[symbol].PositionPct = 0
-		h.State[symbol].LastTrailingStopPrice = 0
+		h.State[symbol] = NewPositionState(symbol)
 	}
 }
 

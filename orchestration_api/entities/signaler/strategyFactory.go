@@ -4,13 +4,14 @@ import (
 	strategies "github.com/A-Here-And-Now/algo-trader/orchestration_api/entities/signaler/strategies"
 	helper "github.com/A-Here-And-Now/algo-trader/orchestration_api/entities/signaler/strategy_helper"
 	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange"
 	models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 )
 
 /* ------------------------------------------------------------------------ PUBLIC INTERFACE ------------------------------------------------------------------------ */
 type Strategy interface {
 	ConfirmSignalDelivered(symbol string, signal models.Signal)
-	CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal
+	CalculateSignal(symbol string, priceStore exchange.IExchange) models.Signal
 	UpdateTrailingStop(symbol string, ticker models.Ticker)
 }
 

@@ -1,10 +1,10 @@
 package coinbase
 
 type CandlesResponse struct {
-	Candles []Candle `json:"candles"`
+	Candles []CoinbaseHistoricalCandle `json:"candles"`
 }
 
-type Candle struct {
+type CoinbaseHistoricalCandle struct {
 	Start     string  `json:"start"`
 	High      float64 `json:"high"`
 	Low       float64 `json:"low"`

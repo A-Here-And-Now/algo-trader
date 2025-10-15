@@ -5,39 +5,34 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"sync"
 	"time"
 
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/channel_helper"
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/entities/signaler"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/entities/trader"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange"
+	coinbase_exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange/coinbase"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
-	"github.com/gorilla/websocket"
 )
 
 type Manager struct {
-	mu           sync.RWMutex 
-	ctx          context.Context
-	wg           sync.WaitGroup
-	Cfg          ManagerCfg
-	updates      chan ManagerCfg
-	marketDataWS *websocket.Conn
-	userDataWS   *websocket.Conn
-	profitLossTotal      float64
-	engine               *signaler.SignalEngine
-	traderResources      map[string]*trader.TraderResource
-	marketPriceResources map[string]*models.FrontEndResource
-	subscriptionChannel  chan string
-	frontendConnected    bool
-	frontendMutex        sync.Mutex
-	client               *coinbase.CoinbaseClient
-	tokenBalances        map[string]float64
-	apiKey               string
-	apiSecret            string
-	tokens               []string
+	mu                sync.RWMutex
+	ctx               context.Context
+	wg                sync.WaitGroup
+	Cfg               ManagerCfg
+	updates           chan ManagerCfg
+	profitLossTotal   float64
+	engine            *signaler.SignalEngine
+	traderResources   map[string]*trader.TraderResource
+	frontendConnected bool
+	frontendMutex     sync.Mutex
+	tokenBalances     map[string]float64
+	apiKey            string
+	apiSecret         string
+	tokens            []string
+	exchange          exchange.IExchange
 }
 
 type ManagerCfg struct {
@@ -50,10 +45,6 @@ func (m *Manager) GetStrategy() enum.Strategy {
 	return m.Cfg.strategy
 }
 
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
 func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.Context, apiKey string, apiSecret string, tokens []string) *Manager {
 	updates := make(chan ManagerCfg)
 
@@ -63,19 +54,16 @@ func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.
 			maxPL:    maxPL,
 			strategy: strategy,
 		},
-		ctx:     ctx,
-		updates: updates,
-		traderResources:      make(map[string]*trader.TraderResource),
-		marketPriceResources: make(map[string]*models.FrontEndResource),
-		subscriptionChannel:  make(chan string),
-		frontendConnected:    false,
-		frontendMutex:        sync.Mutex{},
-		apiKey:               apiKey,
-		apiSecret:            apiSecret,
-		tokens:               tokens,
+		ctx:               ctx,
+		updates:           updates,
+		traderResources:   make(map[string]*trader.TraderResource),
+		frontendConnected: false,
+		frontendMutex:     sync.Mutex{},
+		apiKey:            apiKey,
+		apiSecret:         apiSecret,
+		tokens:            tokens,
+		exchange:          coinbase_exchange.NewCoinbaseExchange(ctx, apiKey, apiSecret, enum.CandleSize5m),
 	}
-
-	manager.client = coinbase.NewCoinbaseClient("https://api.coinbase.com", apiKey, apiSecret)
 
 	manager.engine = signaler.NewSignalEngine(manager.ctx, strategy)
 
@@ -93,18 +81,6 @@ func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.
 	}()
 
 	return &manager
-}
-
-func (m *Manager) safeAddMarketPriceResource(symbol string, candleHistory26Days []models.Candle) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.marketPriceResources[symbol] = models.NewFrontEndResource(candleHistory26Days)
-}
-
-func (m *Manager) safeRemoveMarketPriceResource(symbol string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.marketPriceResources, symbol)
 }
 
 func (m *Manager) safeAddTraderResource(symbol string, cfg trader.TradeCfg, done chan struct{}, cancel context.CancelFunc, updates chan trader.TradeCfg) {
@@ -125,16 +101,6 @@ func (m *Manager) safeGetTraderResources() map[string]*trader.TraderResource {
 	defer m.mu.RUnlock()
 	resources := make(map[string]*trader.TraderResource)
 	for symbol, resource := range m.traderResources {
-		resources[symbol] = resource
-	}
-	return resources
-}
-
-func (m *Manager) safeGetMarketPriceResources() map[string]*models.FrontEndResource {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	resources := make(map[string]*models.FrontEndResource)
-	for symbol, resource := range m.marketPriceResources {
 		resources[symbol] = resource
 	}
 	return resources
@@ -181,13 +147,19 @@ func (m *Manager) Start(tokenStr string) error {
 
 	m.safeAddTraderResource(tokenStr, cfg, done, cancel, updates)
 
-	safeMarketPriceResources := m.safeGetMarketPriceResources()
+	// Get initial historical data from exchange
+	priceHistory := m.exchange.GetPriceHistory(tokenStr)
+	candleHistory := m.exchange.GetCandleHistory(tokenStr)
+	// TODO: Get 26-day candle history for initial strategy state
+	candleHistory26Days := candleHistory.Candles // Placeholder for now
 
+	// Register with signal engine - note: engine will subscribe to exchange directly
 	m.engine.RegisterToken(tokenStr, m.traderResources[tokenStr].PriceFeedToSignalEngine, m.traderResources[tokenStr].CandleFeedToSignalEngine,
-		m.traderResources[tokenStr].SignalChan, safeMarketPriceResources[tokenStr].PriceHistory, safeMarketPriceResources[tokenStr].CandleHistory, safeMarketPriceResources[tokenStr].CandleHistory26Days)
+		m.traderResources[tokenStr].SignalChan, priceHistory, candleHistory.Candles, candleHistory26Days)
 
 	m.RefreshTokenBalances()
 
+	// Create new trader - trader will subscribe to exchange directly for data feeds
 	newTrader := trader.NewTrader(cfg, ctx, cancel, updates, m.traderResources[tokenStr].SignalChan, m.traderResources[tokenStr].OrderFeed, m.tokenBalances[tokenStr])
 	newTrader.CoinbaseClient = m.client
 
@@ -266,18 +238,21 @@ func (m *Manager) UpdateStrategy(strategy enum.Strategy) {
 
 func (m *Manager) GetAllPriceHistory() map[string][]models.Ticker {
 	allPriceHistory := make(map[string][]models.Ticker)
-	safeMarketPriceResources := m.safeGetMarketPriceResources()
-	for symbol, resource := range safeMarketPriceResources {
-		allPriceHistory[symbol] = resource.PriceHistory
+	traders := m.safeGetTraderResources()
+	for symbol := range traders {
+		allPriceHistory[symbol] = m.exchange.GetPriceHistory(symbol)
 	}
 	return allPriceHistory
 }
 
 func (m *Manager) GetAllCandleHistory() map[string][]models.Candle {
 	allCandleHistory := make(map[string][]models.Candle)
-	safeMarketPriceResources := m.safeGetMarketPriceResources()
-	for symbol, resource := range safeMarketPriceResources {
-		allCandleHistory[symbol] = resource.CandleHistory
+	traders := m.safeGetTraderResources()
+	// Default to 5m candles for now - this should be configurable
+	candleSize := enum.CandleSize5m
+	for symbol := range traders {
+		candleHistory := m.exchange.GetCandleHistory(symbol, candleSize)
+		allCandleHistory[symbol] = candleHistory.Candles
 	}
 	return allCandleHistory
 }
