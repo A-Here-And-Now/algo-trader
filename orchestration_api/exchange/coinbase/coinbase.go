@@ -6,12 +6,13 @@ import (
 	"log"
 	"net/url"
 
+	"sync"
+
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	exchange_helper "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange/helper"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	cb_models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models/coinbase"
 	"github.com/gorilla/websocket"
-	"sync"
-	exchange_helper "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange/helper"
 )
 
 // CoinbaseExchange implements the Exchange interface for Coinbase Advanced Trade API
@@ -28,17 +29,15 @@ type CoinbaseExchange struct {
 
 	// Subscription channels per symbol and candle size
 	candleChannels map[string][]chan models.Candle
-	candleSizePerSymbol map[string]enum.CandleSize
-	inboundCandleSize enum.CandleSize
-	
+
 	// Ticker channels per symbol
 	tickerChannels map[string][]chan models.Ticker
 
 	// Order update channels per symbol
 	orderChannels map[string][]chan models.OrderUpdate
 
-	client              *CoinbaseClient
-	priceActionStore    *exchange_helper.PriceActionStore
+	client           *CoinbaseClient
+	priceActionStore *exchange_helper.PriceActionStore
 }
 
 func NewCoinbaseExchange(ctx context.Context, apiKey, apiSecret string, inboundCandleSize enum.CandleSize) *CoinbaseExchange {
@@ -55,7 +54,7 @@ func NewCoinbaseExchange(ctx context.Context, apiKey, apiSecret string, inboundC
 	}
 }
 
-func (e *CoinbaseExchange) SubscribeToOrderUpdates(symbol string) (<-chan models.OrderUpdate, func(), error) {
+func (e *CoinbaseExchange) SubscribeToOrderUpdates(symbol string) (<-chan models.OrderUpdate, func()) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -69,21 +68,22 @@ func (e *CoinbaseExchange) SubscribeToOrderUpdates(symbol string) (<-chan models
 	cleanup := func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
-		close(ch)
-		// Remove channel from slice
-		channels := e.orderChannels[symbol]
-		for i, c := range channels {
-			if c == ch {
-				e.orderChannels[symbol] = append(channels[:i], channels[i+1:]...)
-				break
+
+		if channels, ok := e.orderChannels[symbol]; ok {
+			for i, c := range channels {
+				if c == ch {
+					close(ch)
+					e.orderChannels[symbol] = append(channels[:i], channels[i+1:]...)
+					break
+				}
 			}
 		}
 	}
 
-	return ch, cleanup, nil
+	return ch, cleanup
 }
 
-func (e *CoinbaseExchange) SubscribeToTicker(symbol string) (<-chan models.Ticker, func(), error) {
+func (e *CoinbaseExchange) SubscribeToTicker(symbol string) (<-chan models.Ticker, func()) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -97,21 +97,21 @@ func (e *CoinbaseExchange) SubscribeToTicker(symbol string) (<-chan models.Ticke
 	cleanup := func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
-		close(ch)
-		// Remove channel from slice
+
 		channels := e.tickerChannels[symbol]
 		for i, c := range channels {
 			if c == ch {
+				close(ch)
 				e.tickerChannels[symbol] = append(channels[:i], channels[i+1:]...)
 				break
 			}
 		}
 	}
 
-	return ch, cleanup, nil
+	return ch, cleanup
 }
 
-func (e *CoinbaseExchange) SubscribeToCandle(symbol string) (<-chan models.Candle, func(), error) {
+func (e *CoinbaseExchange) SubscribeToCandle(symbol string) (<-chan models.Candle, func()) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -125,11 +125,11 @@ func (e *CoinbaseExchange) SubscribeToCandle(symbol string) (<-chan models.Candl
 	cleanup := func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
-		close(ch)
-		// Remove channel from slice
+
 		if channels, ok := e.candleChannels[symbol]; ok {
 			for i, c := range channels {
 				if c == ch {
+					close(ch)
 					e.candleChannels[symbol] = append(channels[:i], channels[i+1:]...)
 					break
 				}
@@ -137,26 +137,26 @@ func (e *CoinbaseExchange) SubscribeToCandle(symbol string) (<-chan models.Candl
 		}
 	}
 
-	return ch, cleanup, nil
+	return ch, cleanup
 }
 
 func (e *CoinbaseExchange) GetCandleHistory(symbol string) models.CandleHistory {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	return e.priceActionStore.GetCandleHistory(symbol)
 }
 
 func (e *CoinbaseExchange) GetLongCandleHistory(symbol string) models.CandleHistory {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	return e.priceActionStore.GetLongCandleHistory(symbol)
 }
 
 func (e *CoinbaseExchange) GetPriceHistory(symbol string) []models.Ticker {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	return e.priceActionStore.GetPriceHistory(symbol)
 }
@@ -166,6 +166,9 @@ func (e *CoinbaseExchange) UpdateInboundCandleSize(candleSize enum.CandleSize) {
 }
 
 func (e *CoinbaseExchange) StartNewTokenDataStream(symbol string, candleSize enum.CandleSize) error {
+	if e.symbolSubscriptions[symbol] {
+		return nil
+	}
 	historicalCandles, longHistoricalCandles, err := e.getHistoricalCandleSets(symbol, candleSize)
 	if err != nil {
 		log.Printf("%v", err)
@@ -200,13 +203,35 @@ func (e *CoinbaseExchange) StartNewTokenDataStream(symbol string, candleSize enu
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
 func (e *CoinbaseExchange) StopTokenDataStream(symbol string) error {
 	e.mu.Lock()
 	e.symbolSubscriptions[symbol] = false
+	// Close all channels for this symbol
+	if channels, ok := e.candleChannels[symbol]; ok {
+		for _, ch := range channels {
+			close(ch)
+		}
+		delete(e.candleChannels, symbol)
+	}
+
+	if channels, ok := e.tickerChannels[symbol]; ok {
+		for _, ch := range channels {
+			close(ch)
+		}
+		delete(e.tickerChannels, symbol)
+	}
+
+	if channels, ok := e.orderChannels[symbol]; ok {
+		for _, ch := range channels {
+			close(ch)
+		}
+		delete(e.orderChannels, symbol)
+	}
+
 	marketDataWS := e.marketDataWS
 	userDataWS := e.userDataWS
 	e.mu.Unlock()
@@ -234,6 +259,7 @@ func (e *CoinbaseExchange) StopTokenDataStream(symbol string) error {
 		}
 	}
 
+	e.clearSymbolSubscriptions(symbol)
 	return nil
 }
 
@@ -300,3 +326,12 @@ func (e *CoinbaseExchange) getHistoricalCandleSets(symbol string, candleSize enu
 	return models.GetDomainCandlesFromHistoricalCandles(symbol, historicalCandles.Candles), models.GetDomainCandlesFromHistoricalCandles(symbol, longHistoricalCandles.Candles), nil
 }
 
+func (e *CoinbaseExchange) clearSymbolSubscriptions(symbol string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Just delete - let the cleanup functions handle closing
+	delete(e.candleChannels, symbol)
+	delete(e.tickerChannels, symbol)
+	delete(e.orderChannels, symbol)
+}

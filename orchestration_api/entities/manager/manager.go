@@ -18,30 +18,30 @@ import (
 )
 
 type Manager struct {
-	mu                sync.RWMutex
-	ctx               context.Context
-	wg                sync.WaitGroup
-	Cfg               ManagerCfg
-	updates           chan ManagerCfg
-	profitLossTotal   float64
-	engine            *signaler.SignalEngine
-	traderResources   map[string]*trader.TraderResource
-	frontendConnected bool
-	frontendMutex     sync.Mutex
-	tokenBalances     map[string]float64
-	apiKey            string
-	apiSecret         string
-	tokens            []string
-	exchange          exchange.IExchange
+	mu                  sync.RWMutex
+	ctx                 context.Context
+	wg                  sync.WaitGroup
+	Cfg                 ManagerCfg
+	updates             chan ManagerCfg
+	profitLossTotal     float64
+	engine              *signaler.SignalEngine
+	traderResources     map[string]*trader.TraderResource
+	frontendConnected   bool
+	frontendMutex       sync.Mutex
+	tokenBalances       map[string]float64
+	apiKey              string
+	apiSecret           string
+	tokens              []string
+	exchange            exchange.IExchange
 	signalEngineUpdates chan signaler.SignalEngineConfigUpdate
 }
 
 type ManagerCfg struct {
-	funds    float64
-	maxPL    int64
-	tokenStrategies map[string]enum.Strategy
+	funds            float64
+	maxPL            int64
+	tokenStrategies  map[string]enum.Strategy
 	tokenCandleSizes map[string]enum.CandleSize
-	tokenEnabled map[string]bool
+	tokenEnabled     map[string]bool
 }
 
 func (m *Manager) GetStrategy(token string) enum.Strategy {
@@ -54,21 +54,21 @@ func NewManager(funds float64, maxPL int64, startingStrategy enum.Strategy, star
 
 	manager := Manager{
 		Cfg: ManagerCfg{
-			funds:    funds,
-			maxPL:    maxPL,
-			tokenStrategies: make(map[string]enum.Strategy),
+			funds:            funds,
+			maxPL:            maxPL,
+			tokenStrategies:  make(map[string]enum.Strategy),
 			tokenCandleSizes: make(map[string]enum.CandleSize),
-			tokenEnabled: make(map[string]bool),
+			tokenEnabled:     make(map[string]bool),
 		},
-		ctx:               ctx,
-		updates:           updates,
-		traderResources:   make(map[string]*trader.TraderResource),
-		frontendConnected: false,
-		frontendMutex:     sync.Mutex{},
-		apiKey:            apiKey,
-		apiSecret:         apiSecret,
-		tokens:            tokens,
-		exchange:          coinbase_exchange.NewCoinbaseExchange(ctx, apiKey, apiSecret, enum.CandleSize5m),
+		ctx:                 ctx,
+		updates:             updates,
+		traderResources:     make(map[string]*trader.TraderResource),
+		frontendConnected:   false,
+		frontendMutex:       sync.Mutex{},
+		apiKey:              apiKey,
+		apiSecret:           apiSecret,
+		tokens:              tokens,
+		exchange:            coinbase_exchange.NewCoinbaseExchange(ctx, apiKey, apiSecret, enum.CandleSize5m),
 		signalEngineUpdates: signalEngineUpdates,
 	}
 
@@ -110,8 +110,8 @@ func (m *Manager) safeRemoveTraderResource(symbol string) {
 }
 
 func (m *Manager) safeGetTraderResources() map[string]*trader.TraderResource {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	resources := make(map[string]*trader.TraderResource)
 	for symbol, resource := range m.traderResources {
 		resources[symbol] = resource
@@ -129,6 +129,9 @@ func (m *Manager) StopAll() {
 	for _, t := range traders {
 		_ = m.Stop(t.Cfg.Symbol)
 	}
+
+	m.engine.Stop()
+	close(m.signalEngineUpdates)
 
 	doneCh := make(chan struct{})
 	go func() {
@@ -154,8 +157,8 @@ func (m *Manager) Start(tokenStr string) error {
 	done := make(chan struct{})
 
 	tradeCfg := trader.TradeCfg{
-		Symbol: tokenStr,
-		Strategy: m.Cfg.tokenStrategies[tokenStr],
+		Symbol:     tokenStr,
+		Strategy:   m.Cfg.tokenStrategies[tokenStr],
 		CandleSize: m.Cfg.tokenCandleSizes[tokenStr],
 	}
 

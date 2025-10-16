@@ -13,13 +13,13 @@ import (
 )
 
 type Trader struct {
-	cfg                         TradeCfg
-	ctx                         context.Context
-	cancel                      context.CancelFunc
-	updates                     chan TradeCfg
-	signalCh                    chan models.Signal
-	state                       models.TraderState
-	exchange                    exchange.IExchange
+	cfg      TradeCfg
+	ctx      context.Context
+	cancel   context.CancelFunc
+	updates  chan TradeCfg
+	signalCh chan models.Signal
+	state    models.TraderState
+	exchange exchange.IExchange
 }
 
 // NewTrader builds a trader instance from a config.
@@ -30,37 +30,54 @@ func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, upd
 func (t *Trader) Run() {
 	log.Printf("[Trader %s] started – AllocatedFunds=%v", t.cfg.Symbol, t.cfg.AllocatedFunds)
 
-	tickerCh, tickerCleanup, err := t.exchange.SubscribeToTicker(t.cfg.Symbol)
-	if err != nil {
-		log.Printf("[Trader %s] failed to subscribe to ticker: %v", t.cfg.Symbol, err)
-		return
-	}
+	tickerCh, tickerCleanup := t.exchange.SubscribeToTicker(t.cfg.Symbol)
 	defer tickerCleanup()
-	orderUpdateCh, orderUpdateCleanup, err := t.exchange.SubscribeToOrderUpdates(t.cfg.Symbol)
-	if err != nil {
-		log.Printf("[Trader %s] failed to subscribe to ticker: %v", t.cfg.Symbol, err)
-		return
-	}
+	orderUpdateCh, orderUpdateCleanup := t.exchange.SubscribeToOrderUpdates(t.cfg.Symbol)
 	defer orderUpdateCleanup()
 	ticker := time.NewTicker(enum.GetTimeDurationFromCandleSize(t.cfg.CandleSize) / 5)
 	defer ticker.Stop()
+
 	for {
 		select {
-		case price := <-tickerCh:
-			t.handlePriceUpdate(price)
-		case update := <-t.updates:
-			t.adjustTargetPositionAccordingToAllocatedFundsUpdate(update)
-		case sig := <-t.signalCh:
-			t.handleSignal(sig)
-		case ord := <-orderUpdateCh:
-			t.handleOrderUpdate(ord)
-		case <-ticker.C:
-			t.executeTradesToMakeActualTrackTarget()
 		case <-t.ctx.Done():
-			log.Printf("[Trader %s] Context done...  closing positions", t.cfg.Symbol)
+			log.Printf("[Trader %s] Context done... closing positions", t.cfg.Symbol)
 			t.cancelPendingOrderWithTimeout()
 			t.sellTokensWithTimeout()
 			return
+
+		case price, ok := <-tickerCh:
+			if !ok || t.ctx.Err() != nil {
+				log.Printf("[Trader %s] Ticker channel closed", t.cfg.Symbol)
+				return
+			}
+			t.handlePriceUpdate(price)
+
+		case ord, ok := <-orderUpdateCh:
+			if !ok || t.ctx.Err() != nil {
+				log.Printf("[Trader %s] Order update channel closed", t.cfg.Symbol)
+				return
+			}
+			t.handleOrderUpdate(ord)
+
+		case <-ticker.C:
+			if t.ctx.Err() != nil {
+				return
+			}
+			t.executeTradesToMakeActualTrackTarget()
+
+		case update, ok := <-t.updates:
+			if !ok || t.ctx.Err() != nil {
+				log.Printf("[Trader %s] Updates channel closed, exiting", t.cfg.Symbol)
+				return // Manager stopped us
+			}
+			t.adjustTargetPositionAccordingToAllocatedFundsUpdate(update)
+
+		case sig, ok := <-t.signalCh:
+			if !ok || t.ctx.Err() != nil {
+				log.Printf("[Trader %s] Signal channel closed, exiting", t.cfg.Symbol)
+				return // Manager stopped us
+			}
+			t.handleSignal(sig)
 		}
 	}
 }

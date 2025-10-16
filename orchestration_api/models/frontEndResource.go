@@ -1,13 +1,9 @@
 package models
 
-import (
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
-)
-
 type FrontEndResource struct {
 	PriceFeed     chan Ticker
 	CandleFeed    chan Candle
-	OrderFeed     chan coinbase.OrderUpdate
+	OrderFeed     chan OrderUpdate
 	StopPrice     func()
 	StopCandle    func()
 	PriceHistory  []Ticker
@@ -19,7 +15,7 @@ func NewFrontEndResource(candleHistory26Days []Candle) *FrontEndResource {
 	return &FrontEndResource{
 		PriceFeed:     make(chan Ticker),
 		CandleFeed:    make(chan Candle),
-		OrderFeed:     make(chan coinbase.OrderUpdate),
+		OrderFeed:     make(chan OrderUpdate),
 		PriceHistory:  make([]Ticker, 1),
 		CandleHistory: make([]Candle, 1),
 		CandleHistory26Days: candleHistory26Days,

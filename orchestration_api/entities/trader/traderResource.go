@@ -27,4 +27,5 @@ func NewTraderResource(cfg TradeCfg, done chan struct{}, cancel context.CancelFu
 func (t *TraderResource) Stop() {
 	t.Cancel()
 	close(t.SignalChan)
+	close(t.Updates)
 }

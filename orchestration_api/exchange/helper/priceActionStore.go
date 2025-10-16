@@ -20,30 +20,30 @@ type IPriceActionStore interface {
 }
 
 type PriceActionStore struct {
-	mu                      		sync.RWMutex
-	tokens                  		[]string
-	priceHistory            		map[string][]models.Ticker
-	candleHistory           		map[string]*models.CandleHistory
-	longCandleHistory       		map[string]*models.CandleHistory
-	candleSize              		map[string]enum.CandleSize
-	longCandleSize          		map[string]enum.CandleSize
-	lastFiveMinuteCandleStart		map[string]time.Time
-	storedCandleVolume        		map[string]float64
-	volumeOfLastInboundCandle   	map[string]float64
-	inboundCandleSize        		enum.CandleSize
+	mu                        sync.RWMutex
+	tokens                    []string
+	priceHistory              map[string][]models.Ticker
+	candleHistory             map[string]*models.CandleHistory
+	longCandleHistory         map[string]*models.CandleHistory
+	candleSize                map[string]enum.CandleSize
+	longCandleSize            map[string]enum.CandleSize
+	lastFiveMinuteCandleStart map[string]time.Time
+	storedCandleVolume        map[string]float64
+	volumeOfLastInboundCandle map[string]float64
+	inboundCandleSize         enum.CandleSize
 }
 
 func NewStore(inboundCandleSize enum.CandleSize) *PriceActionStore {
 	store := PriceActionStore{
-		tokens:                      []string{},
-		priceHistory:                make(map[string][]models.Ticker),
-		candleHistory:               make(map[string]*models.CandleHistory),
-		longCandleHistory:           make(map[string]*models.CandleHistory),
-		candleSize:                  make(map[string]enum.CandleSize),
-		longCandleSize:              make(map[string]enum.CandleSize),
-		lastFiveMinuteCandleStart:   make(map[string]time.Time),
-		storedCandleVolume:        	 make(map[string]float64),
-		volumeOfLastInboundCandle:   make(map[string]float64),
+		tokens:                    []string{},
+		priceHistory:              make(map[string][]models.Ticker),
+		candleHistory:             make(map[string]*models.CandleHistory),
+		longCandleHistory:         make(map[string]*models.CandleHistory),
+		candleSize:                make(map[string]enum.CandleSize),
+		longCandleSize:            make(map[string]enum.CandleSize),
+		lastFiveMinuteCandleStart: make(map[string]time.Time),
+		storedCandleVolume:        make(map[string]float64),
+		volumeOfLastInboundCandle: make(map[string]float64),
 	}
 
 	return &store
@@ -103,34 +103,40 @@ func (s *PriceActionStore) IngestCandleOfInboundCandleSize(candle models.Candle)
 	s.ingestPrice(symbol, candle.Close, candle.Start)
 	s.updateCandleHistory(symbol, candle, s.candleSize[symbol])
 	s.updateCandleHistory(symbol, candle, s.longCandleSize[symbol])
-	if (s.lastFiveMinuteCandleStart[symbol].IsZero() || s.lastFiveMinuteCandleStart[symbol].Before(candle.Start)) {
+	if s.lastFiveMinuteCandleStart[symbol].IsZero() || s.lastFiveMinuteCandleStart[symbol].Before(candle.Start) {
 		s.lastFiveMinuteCandleStart[symbol] = candle.Start
 	}
-	return s.candleHistory[symbol].Candles[len(s.candleHistory[symbol].Candles) - 1]
+	return s.candleHistory[symbol].Candles[len(s.candleHistory[symbol].Candles)-1]
 }
 
 func (s *PriceActionStore) ingestPrice(symbol string, price float64, time time.Time) {
 	s.priceHistory[symbol] = append(s.priceHistory[symbol], models.Ticker{
-		Symbol:    symbol,
-		Price:     price,
-		Time:      time,
+		Symbol: symbol,
+		Price:  price,
+		Time:   time,
 	})
 
 	length := len(s.priceHistory[symbol])
 	if length > 1200 {
-		s.priceHistory[symbol] = s.priceHistory[symbol][length - 1200:]
+		s.priceHistory[symbol] = s.priceHistory[symbol][length-1200:]
 	}
 }
 
 func (s *PriceActionStore) GetPriceHistory(symbol string) []models.Ticker {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.priceHistory[symbol]; !ok {
+		return []models.Ticker{}
+	}
 	return s.priceHistory[symbol]
 }
 
 func (s *PriceActionStore) GetCandleHistory(symbol string) models.CandleHistory {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.candleHistory[symbol]; !ok {
+		return models.CandleHistory{Candles: []models.Candle{}}
+	}
 	orig := s.candleHistory[symbol]
 
 	merged := make([]models.Candle, 0, len(orig.Candles))
@@ -139,9 +145,12 @@ func (s *PriceActionStore) GetCandleHistory(symbol string) models.CandleHistory 
 	return models.CandleHistory{Candles: merged}
 }
 
-func (s *PriceActionStore) GetLongCandleHistory(symbol string)models.CandleHistory {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *PriceActionStore) GetLongCandleHistory(symbol string) models.CandleHistory {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.longCandleHistory[symbol]; !ok {
+		return models.CandleHistory{Candles: []models.Candle{}}
+	}
 	orig := s.longCandleHistory[symbol]
 
 	merged := make([]models.Candle, 0, len(orig.Candles))
@@ -154,7 +163,7 @@ func (s *PriceActionStore) updateCandleHistory(symbol string, candle models.Cand
 	candleHistory := s.candleHistory[symbol]
 	timeLastCandle := candleHistory.Candles[len(candleHistory.Candles)-1].Start
 	volumeOfCurrentCandle := s.getCurrentCandleVolume(symbol, candle, candleSize)
-	if time.Now().Sub(timeLastCandle) > enum.GetTimeDurationFromCandleSize(candleSize) {
+	if time.Since(timeLastCandle) > enum.GetTimeDurationFromCandleSize(candleSize) {
 		candleHistory.Candles = append(candleHistory.Candles, models.NewCandle(symbol, timeLastCandle, candleSize, candle.Close, volumeOfCurrentCandle))
 	} else {
 		candleHistory.Candles[len(candleHistory.Candles)-1].UpdateCandle(candle.Close, volumeOfCurrentCandle)
@@ -167,23 +176,23 @@ func (s *PriceActionStore) updateCandleHistory(symbol string, candle models.Cand
 func (s *PriceActionStore) getCurrentCandleVolume(symbol string, candle models.Candle, candleSize enum.CandleSize) float64 {
 	volumeToSubstract := 0.0
 	length := len(s.candleHistory[symbol].Candles)
-	if (candleSize == enum.CandleSize5m) {
+	if candleSize == enum.CandleSize5m {
 		return candle.Volume
-	} else if (enum.GetTimeDurationFromCandleSize(candleSize) < enum.GetTimeDurationFromCandleSize(enum.CandleSize5m)) {
-		numCandles := int(time.Now().Sub(s.lastFiveMinuteCandleStart[symbol]) / enum.GetTimeDurationFromCandleSize(candleSize))
+	} else if enum.GetTimeDurationFromCandleSize(candleSize) < enum.GetTimeDurationFromCandleSize(enum.CandleSize5m) {
+		numCandles := int(time.Since(s.lastFiveMinuteCandleStart[symbol]) / enum.GetTimeDurationFromCandleSize(candleSize))
 		s.storedCandleVolume[symbol] = 0.0
 
 		for i := int(0); i < numCandles; i++ {
-			volumeToSubstract += s.candleHistory[symbol].Candles[length - 1 - i].Volume
+			volumeToSubstract += s.candleHistory[symbol].Candles[length-1-i].Volume
 		}
 
 		return candle.Volume - volumeToSubstract
 	} else {
 		timeLastCandle := s.candleHistory[symbol].Candles[len(s.candleHistory[symbol].Candles)-1].Start
 
-		if (time.Now().Sub(timeLastCandle) > enum.GetTimeDurationFromCandleSize(candleSize)) {
+		if time.Since(timeLastCandle) > enum.GetTimeDurationFromCandleSize(candleSize) {
 			s.storedCandleVolume[symbol] = 0.0
-		} else if (s.volumeOfLastInboundCandle[symbol] > candle.Volume) {
+		} else if s.volumeOfLastInboundCandle[symbol] > candle.Volume {
 			s.storedCandleVolume[symbol] += s.volumeOfLastInboundCandle[symbol]
 			s.volumeOfLastInboundCandle[symbol] = candle.Volume
 		}

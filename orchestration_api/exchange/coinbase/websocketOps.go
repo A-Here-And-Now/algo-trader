@@ -9,15 +9,15 @@ import (
 	"time"
 
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/channel_helper"
-	cb_models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models/coinbase"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
+	cb_models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models/coinbase"
 	"github.com/gorilla/websocket"
 )
 
 type UserChannelMessage struct {
 	Channel string `json:"channel"`
 	Events  []struct {
-		Type   string           `json:"type"`
+		Type   string            `json:"type"`
 		Orders []cb_models.Order `json:"orders"`
 	} `json:"events"`
 }
@@ -187,15 +187,14 @@ func (e *CoinbaseExchange) readLoop(conn *websocket.Conn) {
 }
 
 func (e *CoinbaseExchange) consumeCandle(inboundCandle models.Candle) {
-	candleToPublish :=e.priceActionStore.IngestCandleOfInboundCandleSize(inboundCandle)
+	candleToPublish := e.priceActionStore.IngestCandleOfInboundCandleSize(inboundCandle)
 	e.publishCandle(candleToPublish)
 	e.publishPrice(candleToPublish)
 }
 
-
 func (e *CoinbaseExchange) publishCandle(candle models.Candle) {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	// Write to all subscribed candle channels for this symbol and size
 	if channels, ok := e.candleChannels[candle.ProductID]; ok {
@@ -212,9 +211,9 @@ func (e *CoinbaseExchange) publishPrice(candle models.Candle) {
 	symbol := candle.ProductID
 
 	ticker := models.Ticker{
-		Symbol:    symbol,
-		Price:     candle.Close,
-		Time:      time.Now(),
+		Symbol: symbol,
+		Price:  candle.Close,
+		Time:   time.Now(),
 	}
 
 	// Write to all subscribed ticker channels for this symbol
@@ -226,13 +225,13 @@ func (e *CoinbaseExchange) publishPrice(candle models.Candle) {
 }
 
 func (e *CoinbaseExchange) subscribeToMarketDataForAllTokens(conn *websocket.Conn) {
-	e.mu.RLock()
+	e.mu.Lock()
 	// Get all currently subscribed symbols
 	symbols := make([]string, 0, len(e.symbolSubscriptions))
 	for symbol := range e.symbolSubscriptions {
 		symbols = append(symbols, symbol)
 	}
-	e.mu.RUnlock()
+	e.mu.Unlock()
 
 	if len(symbols) == 0 {
 		return
@@ -320,12 +319,12 @@ func (e *CoinbaseExchange) runUserWebSocket(ctx context.Context, wsURL string) {
 }
 
 func (e *CoinbaseExchange) sendUserSubscriptions(conn *websocket.Conn) error {
-	e.mu.RLock()
+	e.mu.Lock()
 	symbols := make([]string, 0, len(e.symbolSubscriptions))
 	for symbol := range e.symbolSubscriptions {
 		symbols = append(symbols, symbol)
 	}
-	e.mu.RUnlock()
+	e.mu.Unlock()
 
 	if len(symbols) == 0 {
 		return nil

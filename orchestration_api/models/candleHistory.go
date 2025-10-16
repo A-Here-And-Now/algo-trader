@@ -1,9 +1,8 @@
 package models
 
 import (
-	"log"
 	"math"
-	"strconv"
+	"time"
 )
 
 type CandleHistory struct {
@@ -76,68 +75,67 @@ func (c *CandleHistory) GetHeikenAshiCandleHistory() HeikenAshiCandleHistory {
 }
 
 
-func (p *PriceActionStore) BuildRenkoCandleHistory(brickSize float64) {
-	newRenkoCandleHistory := make(map[string]*RenkoCandleHistory)
+// func (p *PriceActionStore) BuildRenkoCandleHistory(brickSize float64) {
+// 	newRenkoCandleHistory := make(map[string]*RenkoCandleHistory)
+// 	for symbol, priceHistory := range p.priceHistory {
+// 		if len(priceHistory) == 0 {
+// 			newRenkoCandleHistory[symbol] = &RenkoCandleHistory{
+// 				RenkoCandles: make([]RenkoCandle, 0),
+// 				LastCandlePrice: 0,
+// 				BrickSize: brickSize,
+// 			}
+// 			continue
+// 		}
 
-	for symbol, priceHistory := range p.priceHistory {
-		if len(priceHistory) == 0 {
-			newRenkoCandleHistory[symbol] = &RenkoCandleHistory{
-				RenkoCandles: make([]RenkoCandle, 0),
-				LastCandlePrice: 0,
-				BrickSize: brickSize,
-			}
-			continue
-		}
+// 		var renkoCandles []RenkoCandle
+// 		lastClose, err := strconv.ParseFloat(priceHistory[0].Price, 64)
+// 		if err != nil {
+// 			log.Printf("RENKO ERROR: Failed to parse %s last close of %s: %v", symbol, priceHistory[0].Price, err)
+// 		}
 
-		var renkoCandles []RenkoCandle
-		lastClose, err := strconv.ParseFloat(priceHistory[0].Price, 64)
-		if err != nil {
-			log.Printf("RENKO ERROR: Failed to parse %s last close of %s: %v", symbol, priceHistory[0].Price, err)
-		}
+// 		for _, p := range priceHistory {
+// 			price, err := strconv.ParseFloat(p.Price, 64)
+// 			if err != nil {
+// 				log.Printf("RENKO ERROR: Failed to parse %s price of %s: %v", p.ProductID, p.Price, err)
+// 			}
+// 			if (math.Abs(price-lastClose) >= brickSize){
+// 				newRenkoCandles, newLastClose := GetNewRenkoCandles(price, lastClose, brickSize)
+// 				renkoCandles = append(renkoCandles, newRenkoCandles...)
+// 				lastClose = newLastClose
+// 			}
+// 		}
 
-		for _, p := range priceHistory {
-			price, err := strconv.ParseFloat(p.Price, 64)
-			if err != nil {
-				log.Printf("RENKO ERROR: Failed to parse %s price of %s: %v", p.ProductID, p.Price, err)
-			}
-			if (math.Abs(price-lastClose) >= brickSize){
-				newRenkoCandles, newLastClose := GetNewRenkoCandles(price, lastClose, brickSize)
-				renkoCandles = append(renkoCandles, newRenkoCandles...)
-				lastClose = newLastClose
-			}
-		}
+// 		newRenkoCandleHistory[symbol] = &RenkoCandleHistory{
+// 			RenkoCandles: renkoCandles,
+// 			LastCandlePrice: lastClose,
+// 			BrickSize: brickSize,
+// 		}
+// 	}
 
-		newRenkoCandleHistory[symbol] = &RenkoCandleHistory{
-			RenkoCandles: renkoCandles,
-			LastCandlePrice: lastClose,
-			BrickSize: brickSize,
-		}
-	}
+// 	p.renkoCandleHistory = newRenkoCandleHistory
+// 	p.isRenkoCandleHistoryBuilt = true
+// }
 
-	p.renkoCandleHistory = newRenkoCandleHistory
-	p.isRenkoCandleHistoryBuilt = true
-}
+// func GetNewRenkoCandles(price float64, lastClose float64, brickSize float64) ([]RenkoCandle, float64) {
+// 	renkoCandles := make([]RenkoCandle, 0)
+// 	for math.Abs(price-lastClose) >= brickSize {
+// 		up := price > lastClose
+// 		var newClose float64
+// 		if up {
+// 			newClose = lastClose + brickSize
+// 		} else {
+// 			newClose = lastClose - brickSize
+// 		}
 
-func GetNewRenkoCandles(price float64, lastClose float64, brickSize float64) ([]RenkoCandle, float64) {
-	renkoCandles := make([]RenkoCandle, 0)
-	for math.Abs(price-lastClose) >= brickSize {
-		up := price > lastClose
-		var newClose float64
-		if up {
-			newClose = lastClose + brickSize
-		} else {
-			newClose = lastClose - brickSize
-		}
+// 		renkoCandles = append(renkoCandles, RenkoCandle{
+// 			Open:  price,
+// 			Close: newClose,
+// 		})
 
-		renkoCandles = append(renkoCandles, RenkoCandle{
-			Open:  price,
-			Close: newClose,
-		})
-
-		lastClose = newClose
-	}
-	return renkoCandles, lastClose
-}
+// 		lastClose = newClose
+// 	}
+// 	return renkoCandles, lastClose
+// }
 
 
 func (c *CandleHistory) GetLows() []float64 {
@@ -172,8 +170,8 @@ func (c *CandleHistory) GetVolumes() []float64 {
 	return volumes
 }
 
-func (c *CandleHistory) GetStarts() []string {
-	starts := make([]string, len(c.Candles))
+func (c *CandleHistory) GetStarts() []time.Time {
+	starts := make([]time.Time, len(c.Candles))
 	for i, candle := range c.Candles {
 		starts[i] = candle.Start
 	}
@@ -236,8 +234,8 @@ func (c *HeikenAshiCandleHistory) GetHeikenAshiVolumes() []float64 {
 	return volumes
 }
 
-func (c *HeikenAshiCandleHistory) GetHeikenAshiStarts() []string {
-	starts := make([]string, len(c.HeikenAshiCandles))
+func (c *HeikenAshiCandleHistory) GetHeikenAshiStarts() []time.Time {
+	starts := make([]time.Time, len(c.HeikenAshiCandles))
 	for i, candle := range c.HeikenAshiCandles {
 		starts[i] = candle.Start
 	}

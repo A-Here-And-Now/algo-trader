@@ -113,7 +113,7 @@ func (candle Candle) GetFrontEndCandle() FrontEndCandle {
 }
 
 type HeikenAshiCandle struct {
-	Start  string
+	Start  time.Time
 	High   float64
 	Low    float64
 	Open   float64

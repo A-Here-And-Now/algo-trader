@@ -9,9 +9,9 @@ import (
 )
 
 type IExchange interface {
-	SubscribeToOrderUpdates(symbol string) (<-chan models.OrderUpdate, func(), error)
-	SubscribeToTicker(symbol string) (<-chan models.Ticker, func(), error)
-	SubscribeToCandle(symbol string) (<-chan models.Candle, func(), error)
+	SubscribeToOrderUpdates(symbol string) (<-chan models.OrderUpdate, func())
+	SubscribeToTicker(symbol string) (<-chan models.Ticker, func())
+	SubscribeToCandle(symbol string) (<-chan models.Candle, func())
 	GetCandleHistory(symbol string) models.CandleHistory
 	GetLongCandleHistory(symbol string) models.CandleHistory
 	GetPriceHistory(symbol string) []models.Ticker

@@ -3,7 +3,6 @@ package manager
 import (
 	"log"
 	"net/http"
-	"time"
 
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
@@ -62,95 +61,100 @@ func (m *Manager) WebSocketHandler(w http.ResponseWriter, r *http.Request) {
 			case "subscribe":
 				for _, symbol := range msg.Symbols {
 					log.Printf("[WS] Subscribing to: %+v", msg.Symbols)
-					
-					// Subscribe to the exchange for this symbol
-					// Default to 5m candles for now
-					_, _, _, err := m.exchange.SubscribeToCandle(symbol, enum.CandleSize5m)
-					if err != nil {
-						log.Printf("[WS] failed to subscribe to candles: %v", err)
-						continue
-					}
+
+					m.exchange.StartNewTokenDataStream(symbol, enum.CandleSize5m)
 					
 					// Send historical data
 					priceHistory := m.exchange.GetPriceHistory(symbol)
-					for _, data := range priceHistory {
-						msg := models.GetFrontEndTicker(data)
+					if len(priceHistory) > 0 {
+						msg := models.GetFrontEndTicker(priceHistory[len(priceHistory)-1])
 						if err := conn.WriteJSON(msg); err != nil {
 							log.Printf("[WS] write error: %v", err)
+						}
+					}
+
+					candleHistory := m.exchange.GetCandleHistory(symbol)
+					if len(candleHistory.Candles) > 0 {	
+						for _, data := range candleHistory.Candles {
+							msg := data.GetFrontEndCandle()
+							if err := conn.WriteJSON(msg); err != nil {
+								log.Printf("[WS] write error: %v", err)
+							}
 						}
 					}
 					
-					candleHistory := m.exchange.GetCandleHistory(symbol, enum.CandleSize5m)
-					for _, data := range candleHistory.Candles {
-						msg := data.GetFrontEndCandle()
-						if err := conn.WriteJSON(msg); err != nil {
-							log.Printf("[WS] write error: %v", err)
+					candleCh, candleCleanup := m.exchange.SubscribeToCandle(symbol)
+					priceCh, priceCleanup := m.exchange.SubscribeToTicker(symbol)
+					orderCh, orderCleanup := m.exchange.SubscribeToOrderUpdates(symbol)
+
+					go func(candleCh <-chan models.Candle, candleCleanup func(), priceCh <-chan models.Ticker, priceCleanup func(), orderCh <-chan models.OrderUpdate, orderCleanup func()) {
+						defer func() {
+							if candleCh != nil {
+								candleCleanup()
+							}
+							if priceCh != nil {
+								priceCleanup()
+							}
+							if orderCh != nil {
+								orderCleanup()
+							}
+						}()
+						for {
+							select {
+								
+							case candle, ok := <-candleCh:
+								if !ok {
+									candleCh = nil  // Prevent this case from being selected again
+									continue
+								}
+								msg := candle.GetFrontEndCandle()
+								if err := conn.WriteJSON(msg); err != nil {
+									log.Printf("[WS] write error: %v", err)
+									return  // Exit on write error
+								}
+								
+							case price, ok := <-priceCh:
+								if !ok {
+									priceCh = nil
+									continue
+								}
+								msg := models.GetFrontEndTicker(price)
+								if err := conn.WriteJSON(msg); err != nil {
+									log.Printf("[WS] write error: %v", err)
+									return
+								}
+								
+							case order, ok := <-orderCh:
+								if !ok {
+									orderCh = nil
+									continue
+								}
+								if err := conn.WriteJSON(order); err != nil {
+									log.Printf("[WS] write error: %v", err)
+									return
+								}
+
+							case <-m.ctx.Done():
+								return
+							}
+							
+							if candleCh == nil && priceCh == nil && orderCh == nil {
+								return
+							}
 						}
-					}
+					}(candleCh, candleCleanup, priceCh, priceCleanup, orderCh, orderCleanup)
 				}
 				log.Printf("[WS] Subscribed to: %+v", msg.Symbols)
 
 			case "unsubscribe":
 				// Unsubscribe handled by cleanup functions from exchange subscriptions
 				log.Printf("[WS] Unsubscribed from: %+v", msg.Symbols)
+
+				for _, symbol := range msg.Symbols {
+					m.Stop(symbol)
+					m.exchange.StopTokenDataStream(symbol)
+				}
 			}
 		}
 	}()
-
-	// Ping ticker
-	pingTicker := time.NewTicker(30 * time.Second)
-	defer pingTicker.Stop()
-
-	// Track subscribed symbols for the frontend
-	subscribedSymbols := make(map[string]bool)
-
-	// Main data pump
-	for {
-		select {
-		case <-done:
-			return
-
-		case <-pingTicker.C:
-			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				return
-			}
-
-		default:
-			// Send price/candle/order data for subscribed symbols
-			for symbol := range subscribedSymbols {
-				// Try to read from frontend feeds
-				priceCh := m.exchange.GetFrontendPriceFeed(symbol)
-				candleCh := m.exchange.GetFrontendCandleFeed(symbol)
-				orderCh := m.exchange.GetFrontendOrderFeed(symbol)
-				
-				select {
-				case ticker, ok := <-priceCh:
-					if ok {
-						msg := models.GetFrontEndTicker(ticker)
-						if err := conn.WriteJSON(msg); err != nil {
-							log.Printf("[WS] write error: %v", err)
-						}
-					}
-				case candle, ok := <-candleCh:
-					if ok {
-						msg := candle.GetFrontEndCandle()
-						if err := conn.WriteJSON(msg); err != nil {
-							log.Printf("[WS] write error: %v", err)
-						}
-					}
-				case ord, ok := <-orderCh:
-					if ok {
-						if err := conn.WriteJSON(ord); err != nil {
-							log.Printf("[WS] write error: %v", err)
-						}
-					}
-				default:
-				}
-			}
-
-			// Small sleep to prevent busy loop
-			time.Sleep(250 * time.Millisecond)
-		}
-	}
 }
-

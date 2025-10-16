@@ -12,8 +12,8 @@ import (
 )
 
 type SignalEngineConfigUpdate struct {
-	Symbol string
-	Strategy enum.Strategy
+	Symbol     string
+	Strategy   enum.Strategy
 	CandleSize enum.CandleSize
 }
 
@@ -29,6 +29,7 @@ type SignalEngine struct {
 	signalChannels   map[string]chan models.Signal
 	tickerChannels   map[string]<-chan models.Ticker
 	tickerCleanup    map[string]func()
+	tokenEnabled     map[string]bool
 	updateCh         <-chan SignalEngineConfigUpdate
 }
 
@@ -45,6 +46,7 @@ func NewSignalEngine(parent context.Context, exchange exchange.IExchange, update
 		signalChannels:   make(map[string]chan models.Signal),
 		tickerChannels:   make(map[string]<-chan models.Ticker),
 		tickerCleanup:    make(map[string]func()),
+		tokenEnabled:     make(map[string]bool),
 		updateCh:         updateCh,
 	}
 
@@ -65,11 +67,7 @@ func (se *SignalEngine) UpdateCandleSize(symbol string, candleSize enum.CandleSi
 
 // RegisterToken wires the channels for a token. Manager should create the channels and pass them in.
 func (se *SignalEngine) RegisterToken(symbol string, strategy enum.Strategy, candleSize enum.CandleSize, signalCh chan models.Signal) {
-	tickerCh, tickerCleanup, err := se.exchange.SubscribeToTicker(symbol)
-	if err != nil {
-		log.Printf("[SignalEngine %s] failed to subscribe to ticker: %v", symbol, err)
-		return
-	}
+	tickerCh, tickerCleanup := se.exchange.SubscribeToTicker(symbol)
 	se.UpdateStrategy(symbol, strategy)
 	se.UpdateCandleSize(symbol, candleSize)
 	se.mu.Lock()
@@ -77,7 +75,7 @@ func (se *SignalEngine) RegisterToken(symbol string, strategy enum.Strategy, can
 	se.tickerCleanup[symbol] = tickerCleanup
 	se.signalChannels[symbol] = signalCh
 	se.lastSignalAt[symbol] = time.Time{}
-
+	se.tokenEnabled[symbol] = true
 	se.mu.Unlock()
 
 	go se.run(symbol)
@@ -91,8 +89,10 @@ func (se *SignalEngine) UnregisterToken(symbol string) {
 	delete(se.tokenStrategies, symbol)
 	delete(se.tokenCandleSizes, symbol)
 	delete(se.lastSignalAt, symbol)
+	se.tickerCleanup[symbol]()
 	delete(se.tickerChannels, symbol)
 	delete(se.tickerCleanup, symbol)
+	delete(se.tokenEnabled, symbol)
 }
 
 func (se *SignalEngine) Stop() {
@@ -102,64 +102,77 @@ func (se *SignalEngine) Stop() {
 func (se *SignalEngine) run(symbol string) {
 	for {
 		interval := se.getWaitInterval(symbol)
-		
+
 		select {
-		case update := <-se.updateCh:
+		case <-se.ctx.Done():
+			return
+		case update, ok := <-se.updateCh:
+			if se.tokenIsDisabled(symbol) || !ok {
+				return
+			}
 			se.UpdateStrategy(update.Symbol, update.Strategy)
 			se.UpdateCandleSize(update.Symbol, update.CandleSize)
 		case <-time.After(interval):
+			if se.tokenIsDisabled(symbol) {
+				return
+			}
 			se.emitSignal(symbol)
-		case ticker := <-se.tickerChannels[symbol]:
+		case ticker, ok := <-se.tickerChannels[symbol]:
+			if se.tokenIsDisabled(symbol) || !ok {
+				return
+			}
 			se.tokenStrategies[symbol].UpdateTrailingStop(symbol, ticker)
-		case <-se.ctx.Done():
-			return
 		}
 	}
 }
 
 func (se *SignalEngine) getWaitInterval(symbol string) time.Duration {
-	se.mu.RLock()
+	se.mu.Lock()
 	candleSize := se.tokenCandleSizes[symbol]
 	lastSignal := se.lastSignalAt[symbol]
-	se.mu.RUnlock()
+	se.mu.Unlock()
 
 	candleDuration := enum.GetTimeDurationFromCandleSize(candleSize)
-	
+
 	// If no signal yet, check every 1/25th of candle duration
 	if lastSignal.IsZero() {
 		waitInterval := candleDuration / 25
-		if waitInterval < 15 * time.Second {
+		if waitInterval < 15*time.Second {
 			return 15 * time.Second
 		}
 		return waitInterval
 	}
-	
+
 	// Calculate when cooldown ends (half candle duration after last signal)
 	cooldownEnds := lastSignal.Add(candleDuration / 2)
 	remaining := time.Until(cooldownEnds)
-	
+
 	// If cooldown has passed, check frequently again
 	if remaining <= 0 {
 		waitInterval := candleDuration / 25
-		if waitInterval < 15 * time.Second {
+		if waitInterval < 15*time.Second {
 			return 15 * time.Second
 		}
 		return waitInterval
 	}
-	
+
 	// Still in cooldown, wait for it to end
 	return remaining
 }
 
 func (se *SignalEngine) emitSignal(symbol string) {
-	se.mu.RLock()
+	se.mu.Lock()
 	signalCh := se.signalChannels[symbol]
 	strategy := se.tokenStrategies[symbol]
-	se.mu.RUnlock()
+
+	se.mu.Unlock()
 
 	signal := strategy.CalculateSignal(symbol, se.exchange)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	if se.tokenIsDisabled(symbol) {
+		return
+	}
 	select {
 	case signalCh <- signal:
 		log.Printf("[SignalEngine %s] emitted %s %.2f%%\n", symbol, signal.Type.String(), signal.Percent)
@@ -170,4 +183,16 @@ func (se *SignalEngine) emitSignal(symbol string) {
 	case <-ticker.C:
 		// drop if receiver is slow
 	}
+}
+
+func (se *SignalEngine) tokenIsDisabled(symbol string) bool {
+	se.mu.Lock()
+	defer se.mu.Unlock()
+	if _, present := se.tokenEnabled[symbol]; !present {
+		return true
+	}
+	if se.ctx.Err() != nil {
+		return true
+	}
+	return false
 }
