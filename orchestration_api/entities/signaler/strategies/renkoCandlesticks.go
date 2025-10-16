@@ -7,6 +7,7 @@ import (
 	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	talib "github.com/markcheno/go-talib"
+	exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange"
 )
 
 type RenkoCandlesticksStrategy struct{ 
@@ -17,10 +18,10 @@ type RenkoCandlesticksStrategy struct{
 	BrickSizeConstant float64
 }
 
-func (s *RenkoCandlesticksStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
+func (s *RenkoCandlesticksStrategy) CalculateSignal(symbol string, exchange exchange.IExchange) models.Signal {
 	atrLen := s.AtrLen
 
-	hist := priceStore.GetCandleHistory(symbol)
+	hist := exchange.GetCandleHistory(symbol)
 	regCloses := hist.GetCloses()
     i := len(regCloses) - 1
     atr := talib.Atr(hist.GetHighs(), hist.GetLows(), regCloses, atrLen)

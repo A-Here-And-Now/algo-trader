@@ -8,6 +8,7 @@ import (
 	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	talib "github.com/markcheno/go-talib"
+	exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange"
 )
 
 type SupertrendStrategy struct {
@@ -20,8 +21,8 @@ type SupertrendStrategy struct {
 	TpAtrMult   float64
 }
 
-func (s *SupertrendStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
-	hist := priceStore.GetFullMergedCandleHistory(symbol)
+func (s *SupertrendStrategy) CalculateSignal(symbol string, exchange exchange.IExchange) models.Signal {
+	hist := exchange.GetCandleHistory(symbol)
 	highs := hist.GetHighs()
 	lows := hist.GetLows()
 	closes := hist.GetCloses()

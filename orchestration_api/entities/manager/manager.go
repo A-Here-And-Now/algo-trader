@@ -33,26 +33,32 @@ type Manager struct {
 	apiSecret         string
 	tokens            []string
 	exchange          exchange.IExchange
+	signalEngineUpdates chan signaler.SignalEngineConfigUpdate
 }
 
 type ManagerCfg struct {
 	funds    float64
 	maxPL    int64
-	strategy enum.Strategy
+	tokenStrategies map[string]enum.Strategy
+	tokenCandleSizes map[string]enum.CandleSize
+	tokenEnabled map[string]bool
 }
 
-func (m *Manager) GetStrategy() enum.Strategy {
-	return m.Cfg.strategy
+func (m *Manager) GetStrategy(token string) enum.Strategy {
+	return m.Cfg.tokenStrategies[token]
 }
 
-func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.Context, apiKey string, apiSecret string, tokens []string) *Manager {
+func NewManager(funds float64, maxPL int64, startingStrategy enum.Strategy, startingCandleSize enum.CandleSize, ctx context.Context, apiKey string, apiSecret string, tokens []string) *Manager {
 	updates := make(chan ManagerCfg)
+	signalEngineUpdates := make(chan signaler.SignalEngineConfigUpdate, 10)
 
 	manager := Manager{
 		Cfg: ManagerCfg{
 			funds:    funds,
 			maxPL:    maxPL,
-			strategy: strategy,
+			tokenStrategies: make(map[string]enum.Strategy),
+			tokenCandleSizes: make(map[string]enum.CandleSize),
+			tokenEnabled: make(map[string]bool),
 		},
 		ctx:               ctx,
 		updates:           updates,
@@ -63,9 +69,16 @@ func NewManager(funds float64, maxPL int64, strategy enum.Strategy, ctx context.
 		apiSecret:         apiSecret,
 		tokens:            tokens,
 		exchange:          coinbase_exchange.NewCoinbaseExchange(ctx, apiKey, apiSecret, enum.CandleSize5m),
+		signalEngineUpdates: signalEngineUpdates,
 	}
 
-	manager.engine = signaler.NewSignalEngine(manager.ctx, strategy)
+	for _, token := range tokens {
+		manager.Cfg.tokenStrategies[token] = startingStrategy
+		manager.Cfg.tokenCandleSizes[token] = startingCandleSize
+		manager.Cfg.tokenEnabled[token] = false
+	}
+
+	manager.engine = signaler.NewSignalEngine(manager.ctx, manager.exchange, signalEngineUpdates)
 
 	go func() {
 		for {
@@ -140,28 +153,23 @@ func (m *Manager) Start(tokenStr string) error {
 
 	done := make(chan struct{})
 
-	var cfg trader.TradeCfg
-	cfg.Symbol = tokenStr
+	tradeCfg := trader.TradeCfg{
+		Symbol: tokenStr,
+		Strategy: m.Cfg.tokenStrategies[tokenStr],
+		CandleSize: m.Cfg.tokenCandleSizes[tokenStr],
+	}
 
 	updates := make(chan trader.TradeCfg, 4)
 
-	m.safeAddTraderResource(tokenStr, cfg, done, cancel, updates)
-
-	// Get initial historical data from exchange
-	priceHistory := m.exchange.GetPriceHistory(tokenStr)
-	candleHistory := m.exchange.GetCandleHistory(tokenStr)
-	// TODO: Get 26-day candle history for initial strategy state
-	candleHistory26Days := candleHistory.Candles // Placeholder for now
+	m.safeAddTraderResource(tokenStr, tradeCfg, done, cancel, updates)
 
 	// Register with signal engine - note: engine will subscribe to exchange directly
-	m.engine.RegisterToken(tokenStr, m.traderResources[tokenStr].PriceFeedToSignalEngine, m.traderResources[tokenStr].CandleFeedToSignalEngine,
-		m.traderResources[tokenStr].SignalChan, priceHistory, candleHistory.Candles, candleHistory26Days)
+	m.engine.RegisterToken(tokenStr, tradeCfg.Strategy, tradeCfg.CandleSize, m.traderResources[tokenStr].SignalChan)
 
 	m.RefreshTokenBalances()
 
 	// Create new trader - trader will subscribe to exchange directly for data feeds
-	newTrader := trader.NewTrader(cfg, ctx, cancel, updates, m.traderResources[tokenStr].SignalChan, m.traderResources[tokenStr].OrderFeed, m.tokenBalances[tokenStr])
-	newTrader.CoinbaseClient = m.client
+	newTrader := trader.NewTrader(tradeCfg, ctx, cancel, updates, m.traderResources[tokenStr].SignalChan, m.tokenBalances[tokenStr], m.exchange)
 
 	go func() {
 		defer close(done)
@@ -170,7 +178,7 @@ func (m *Manager) Start(tokenStr string) error {
 
 	m.reallocateFunds()
 
-	log.Printf("trader %q started (symbol=%s)", tokenStr, cfg.Symbol)
+	log.Printf("trader %q started (symbol=%s)", tokenStr, tradeCfg.Symbol)
 	return nil
 }
 
@@ -203,7 +211,7 @@ func (m *Manager) Stop(token string) error {
 }
 
 func (m *Manager) RefreshTokenBalances() {
-	balances, err := m.client.GetAllTokenBalances(m.ctx)
+	balances, err := m.exchange.GetAllTokenBalances(m.ctx)
 	if err != nil {
 		panic(fmt.Sprintf("failed to get token balances: %v", err))
 	}
@@ -211,29 +219,14 @@ func (m *Manager) RefreshTokenBalances() {
 }
 
 func (m *Manager) UpdateMaxPL(maxPL int64) {
-	m.updates <- ManagerCfg{
-		maxPL:    maxPL,
-		strategy: m.Cfg.strategy,
-		funds:    m.Cfg.funds,
-	}
-
+	cfg := m.Cfg
+	cfg.maxPL = maxPL
+	m.updates <- cfg
 }
 
-func (m *Manager) UpdateStrategy(strategy enum.Strategy) {
-	numTraders := len(m.safeGetTraderResources())
-	if numTraders == 0 {
-		return
-	}
-	m.Cfg.strategy = strategy
-	m.engine.UpdateStrategy(strategy)
-	for _, tr := range m.safeGetTraderResources() {
-		tr.Cfg.Strategy = strategy
-		channel_helper.WriteToChannelAndBufferLatest(tr.Updates, trader.TradeCfg{
-			Symbol:         tr.Cfg.Symbol,
-			AllocatedFunds: tr.Cfg.AllocatedFunds,
-			Strategy:       strategy,
-		})
-	}
+func (m *Manager) UpdateStrategy(token string, strategy enum.Strategy) {
+	m.Cfg.tokenStrategies[token] = strategy
+	m.engine.UpdateStrategy(token, strategy)
 }
 
 func (m *Manager) GetAllPriceHistory() map[string][]models.Ticker {
@@ -248,10 +241,8 @@ func (m *Manager) GetAllPriceHistory() map[string][]models.Ticker {
 func (m *Manager) GetAllCandleHistory() map[string][]models.Candle {
 	allCandleHistory := make(map[string][]models.Candle)
 	traders := m.safeGetTraderResources()
-	// Default to 5m candles for now - this should be configurable
-	candleSize := enum.CandleSize5m
 	for symbol := range traders {
-		candleHistory := m.exchange.GetCandleHistory(symbol, candleSize)
+		candleHistory := m.exchange.GetCandleHistory(symbol)
 		allCandleHistory[symbol] = candleHistory.Candles
 	}
 	return allCandleHistory

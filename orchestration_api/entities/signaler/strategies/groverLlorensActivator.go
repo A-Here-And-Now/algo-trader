@@ -7,6 +7,7 @@ import (
 	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	talib "github.com/markcheno/go-talib"
+	exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange"
 )
 
 type GroverLlorensActivatorStrategy struct {
@@ -17,8 +18,8 @@ type GroverLlorensActivatorStrategy struct {
 	TpAtrMult  float64 // take profit multiplier
 }
 
-func (s *GroverLlorensActivatorStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
-	hist := priceStore.GetFullMergedCandleHistory(symbol)
+func (s *GroverLlorensActivatorStrategy) CalculateSignal(symbol string, exchange exchange.IExchange) models.Signal {
+	hist := exchange.GetCandleHistory(symbol)
 	closes := hist.GetCloses()
 	highs := hist.GetHighs()
 	lows := hist.GetLows()

@@ -7,6 +7,7 @@ import (
 	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	talib "github.com/markcheno/go-talib"
+	exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange"
 )
 
 type TrendFollowingStrategy struct{ 
@@ -32,7 +33,7 @@ type TrendFollowingStrategy struct{
 	TpAtrMult        float64
 }
 
-func (s *TrendFollowingStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
+func (s *TrendFollowingStrategy) CalculateSignal(symbol string, exchange exchange.IExchange) models.Signal {
 	maType := s.MaType
 	shortMALen := s.ShortMALen
 	longMALen := s.LongMALen
@@ -55,7 +56,7 @@ func (s *TrendFollowingStrategy) CalculateSignal(symbol string, priceStore helpe
 	// --------------------------------------------------------------
 	// 1️⃣  Pull the merged candle history (exactly what the script uses)
 	// --------------------------------------------------------------
-	hist := priceStore.GetFullMergedCandleHistory(symbol)
+	hist := exchange.GetCandleHistory(symbol)
 
 	closes := hist.GetCloses()
 	highs := hist.GetHighs()

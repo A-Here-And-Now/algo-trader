@@ -6,9 +6,9 @@ import (
 	"log"
 	"net/url"
 
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
+	cb_models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models/coinbase"
 	"github.com/gorilla/websocket"
 	"sync"
 	exchange_helper "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange/helper"
@@ -30,13 +30,14 @@ type CoinbaseExchange struct {
 	candleChannels map[string][]chan models.Candle
 	candleSizePerSymbol map[string]enum.CandleSize
 	inboundCandleSize enum.CandleSize
+	
 	// Ticker channels per symbol
 	tickerChannels map[string][]chan models.Ticker
 
 	// Order update channels per symbol
 	orderChannels map[string][]chan models.OrderUpdate
 
-	client              *coinbase.CoinbaseClient
+	client              *CoinbaseClient
 	priceActionStore    *exchange_helper.PriceActionStore
 }
 
@@ -49,7 +50,7 @@ func NewCoinbaseExchange(ctx context.Context, apiKey, apiSecret string, inboundC
 		candleChannels:      make(map[string][]chan models.Candle),
 		tickerChannels:      make(map[string][]chan models.Ticker),
 		orderChannels:       make(map[string][]chan models.OrderUpdate),
-		client:              coinbase.NewCoinbaseClient("https://api.coinbase.com", apiKey, apiSecret),
+		client:              newCoinbaseClient("https://api.coinbase.com", apiKey, apiSecret),
 		priceActionStore:    exchange_helper.NewStore(inboundCandleSize),
 	}
 }
@@ -177,7 +178,7 @@ func (e *CoinbaseExchange) StartNewTokenDataStream(symbol string, candleSize enu
 	marketDataWS := e.marketDataWS
 	userDataWS := e.userDataWS
 	e.mu.Unlock()
-	marketDataSubPayload := coinbase.GetMarketSubscriptionPayload([]string{symbol}, false)
+	marketDataSubPayload := cb_models.GetMarketSubscriptionPayload([]string{symbol}, false)
 
 	if marketDataWS != nil {
 		for _, p := range marketDataSubPayload {
@@ -210,7 +211,7 @@ func (e *CoinbaseExchange) StopTokenDataStream(symbol string) error {
 	userDataWS := e.userDataWS
 	e.mu.Unlock()
 	e.priceActionStore.RemoveToken(symbol)
-	marketDataSubPayload := coinbase.GetMarketSubscriptionPayload([]string{symbol}, true)
+	marketDataSubPayload := cb_models.GetMarketSubscriptionPayload([]string{symbol}, true)
 
 	if marketDataWS != nil {
 		for _, p := range marketDataSubPayload {
@@ -256,6 +257,38 @@ func (e *CoinbaseExchange) StartCoinbaseFeed(ctx context.Context, cbAdvUrl strin
 	go e.runMarketDataWebSocket(ctx, u.String())
 }
 
+func (e *CoinbaseExchange) GetHistoricalCandles(ctx context.Context, productID string, candleSize enum.CandleSize) (cb_models.CandlesResponse, error) {
+	return e.client.GetHistoricalCandles(ctx, productID, candleSize)
+}
+
+func (e *CoinbaseExchange) ListAccounts(ctx context.Context) (cb_models.AccountsListResponse, error) {
+	return e.client.ListAccounts(ctx)
+}
+
+func (e *CoinbaseExchange) GetAllTokenBalances(ctx context.Context) (map[string]float64, error) {
+	return e.client.GetAllTokenBalances(ctx)
+}
+
+func (e *CoinbaseExchange) ListOrders(ctx context.Context, productID string, limit int) (cb_models.ListOrdersResponse, error) {
+	return e.client.ListOrders(ctx, productID, limit)
+}
+
+func (e *CoinbaseExchange) CreateOrder(ctx context.Context, productID string, amountOfUSD float64, isBuy bool) (cb_models.CreateOrderResponse, error) {
+	return e.client.CreateOrder(ctx, productID, amountOfUSD, isBuy)
+}
+
+func (e *CoinbaseExchange) SellTokens(ctx context.Context, productID string, amountOfUSD float64) (cb_models.CreateOrderResponse, error) {
+	return e.client.SellTokens(ctx, productID, amountOfUSD)
+}
+
+func (e *CoinbaseExchange) EditOrder(ctx context.Context, body []byte) (cb_models.EditOrderResponse, error) {
+	return e.client.EditOrder(ctx, body)
+}
+
+func (e *CoinbaseExchange) CancelOrders(ctx context.Context, orderID string) error {
+	return e.client.CancelOrders(ctx, orderID)
+}
+
 func (e *CoinbaseExchange) getHistoricalCandleSets(symbol string, candleSize enum.CandleSize) ([]models.Candle, []models.Candle, error) {
 	historicalCandles, err1 := e.client.GetHistoricalCandles(e.ctx, symbol, candleSize)
 	longHistoricalCandles, err2 := e.client.GetHistoricalCandles(e.ctx, symbol, enum.GetLongCandleSizeFromCandleSize(candleSize))
@@ -266,3 +299,4 @@ func (e *CoinbaseExchange) getHistoricalCandleSets(symbol string, candleSize enu
 	}
 	return models.GetDomainCandlesFromHistoricalCandles(symbol, historicalCandles.Candles), models.GetDomainCandlesFromHistoricalCandles(symbol, longHistoricalCandles.Candles), nil
 }
+

@@ -69,16 +69,15 @@ func ToggleTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 func UpdateTradingStrategyHandler(w http.ResponseWriter, r *http.Request) {
 	str := r.URL.Query().Get("strategy")
+	token := r.URL.Query().Get("token")
 	strategy := enum.GetStrategy(str)
 	log := LoggerFrom(r)
-	log.Printf("Updating trading philosophy from %s to %s", mgr.GetStrategy(), strategy)
-
-	mgr.UpdateStrategy(strategy)
+	log.Printf("Updating trading philosophy from %s to %s for token %s", mgr.GetStrategy(token).String(), strategy.String(), token)
+	mgr.UpdateStrategy(token, strategy)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":   "updated",
-		"strategy": strategy,
+		"status": "updated",
 	})
 }
 

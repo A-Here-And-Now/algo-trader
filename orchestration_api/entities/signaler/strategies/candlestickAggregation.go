@@ -8,6 +8,7 @@ import (
 	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	talib "github.com/markcheno/go-talib"
+	exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange"
 )
 
 type CandlestickAggregationStrategy struct{ 
@@ -27,11 +28,11 @@ type CandlestickAggregationStrategy struct{
 	SwingPivotLength int
 }
 
-func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
+func (s *CandlestickAggregationStrategy) CalculateSignal(symbol string, exchange exchange.IExchange) models.Signal {
 	// --------------------------------------------------------------
 	// 1️⃣  Pull merged candle history (the same series the Pine‑Script uses)
 	// --------------------------------------------------------------
-	hist := priceStore.GetFullMergedCandleHistory(symbol)
+	hist := exchange.GetCandleHistory(symbol)
 
 	closes := hist.GetCloses()
 	highs := hist.GetHighs()

@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	cb_models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models/coinbase"
 )
 
-func (t *Trader) getPendingOrderFromResponse(response coinbase.CreateOrderResponse, orderType enum.SignalType, amount float64) models.PendingOrder {
+func (t *Trader) getPendingOrderFromResponse(response cb_models.CreateOrderResponse, orderType enum.SignalType, amount float64) models.PendingOrder {
 	return models.PendingOrder{
 		OrderID:                          response.OrderID,
 		SubmitTime:                       time.Now(),
@@ -17,14 +17,14 @@ func (t *Trader) getPendingOrderFromResponse(response coinbase.CreateOrderRespon
 		OriginalAmountInUSD:              amount,
 		CurrentAmountLeftToBeFilledInUSD: amount,
 		AlreadyFilledInUSD:               0,
-		OriginalAmountInTokens:           amount / t.currentPriceUSDPerToken,
+		OriginalAmountInTokens:           amount / t.state.CurrentPriceUSDPerToken,
 		AlreadyFilledInTokens:            0,
 	}
 }
 
 func (t *Trader) hasPendingOrder() bool {
-	if t.pendingOrder != nil {
-		if t.pendingOrder.CurrentAmountLeftToBeFilledInUSD > 0 {
+	if t.state.PendingOrder != nil {
+		if t.state.PendingOrder.CurrentAmountLeftToBeFilledInUSD > 0 {
 			return true
 		} else {
 			log.Printf("pending order amount is 0, clearing pending order")
@@ -35,15 +35,15 @@ func (t *Trader) hasPendingOrder() bool {
 }
 
 func (t *Trader) clearPendingOrder() {
-	t.pendingOrder = nil
+	t.state.PendingOrder = nil
 }
 
 func (t *Trader) setPendingOrder(order models.PendingOrder) {
-	t.pendingOrder = &order
+	t.state.PendingOrder = &order
 }
 
 func (t *Trader) updatePendingOrderBalances(currentAmountLeftToBeFilledInUSD float64, alreadyFilledUSD float64, alreadyFilledTokens float64) {
-	t.pendingOrder.CurrentAmountLeftToBeFilledInUSD = currentAmountLeftToBeFilledInUSD
-	t.pendingOrder.AlreadyFilledInUSD = alreadyFilledUSD
-	t.pendingOrder.AlreadyFilledInTokens = alreadyFilledTokens
+	t.state.PendingOrder.CurrentAmountLeftToBeFilledInUSD = currentAmountLeftToBeFilledInUSD
+	t.state.PendingOrder.AlreadyFilledInUSD = alreadyFilledUSD
+	t.state.PendingOrder.AlreadyFilledInTokens = alreadyFilledTokens
 }

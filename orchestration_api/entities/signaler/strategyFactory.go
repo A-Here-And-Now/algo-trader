@@ -11,7 +11,7 @@ import (
 /* ------------------------------------------------------------------------ PUBLIC INTERFACE ------------------------------------------------------------------------ */
 type Strategy interface {
 	ConfirmSignalDelivered(symbol string, signal models.Signal)
-	CalculateSignal(symbol string, priceStore exchange.IExchange) models.Signal
+	CalculateSignal(symbol string, exchange exchange.IExchange) models.Signal
 	UpdateTrailingStop(symbol string, ticker models.Ticker)
 }
 

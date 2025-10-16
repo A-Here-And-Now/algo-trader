@@ -3,19 +3,11 @@ package trader
 import (
 	"context"
 
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 )
 
 type TraderResource struct {
 	SignalChan               chan models.Signal
-	PriceFeedToSignalEngine  chan models.Ticker
-	PriceFeedToTrader        chan models.Ticker
-	CandleFeedToSignalEngine chan models.Candle
-	OrderFeed                chan coinbase.OrderUpdate
-	Client                   *coinbase.CoinbaseClient
-	StopPrice                func()
-	StopCandle               func()
 	Cancel                   context.CancelFunc // call to stop the goroutine
 	Done                     chan struct{}      // closed when Run() exits
 	Cfg                      TradeCfg           // keep the config for introspection / restart
@@ -25,10 +17,6 @@ type TraderResource struct {
 func NewTraderResource(cfg TradeCfg, done chan struct{}, cancel context.CancelFunc, updates chan TradeCfg) *TraderResource {
 	return &TraderResource{
 		SignalChan:               make(chan models.Signal),
-		PriceFeedToSignalEngine:  make(chan models.Ticker),
-		PriceFeedToTrader:        make(chan models.Ticker),
-		CandleFeedToSignalEngine: make(chan models.Candle),
-		OrderFeed:                make(chan coinbase.OrderUpdate, 64),
 		Cancel:                   cancel,
 		Done:                     done,
 		Cfg:                      cfg,
@@ -39,8 +27,4 @@ func NewTraderResource(cfg TradeCfg, done chan struct{}, cancel context.CancelFu
 func (t *TraderResource) Stop() {
 	t.Cancel()
 	close(t.SignalChan)
-	close(t.PriceFeedToSignalEngine)
-	close(t.PriceFeedToTrader)
-	close(t.CandleFeedToSignalEngine)
-	close(t.OrderFeed)
 }

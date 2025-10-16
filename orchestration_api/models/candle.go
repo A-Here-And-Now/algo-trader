@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
+	cb_models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models/coinbase"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 )
 
@@ -29,7 +29,7 @@ type CoinbaseCandle struct {
 	ProductID string  `json:"product_id"`
 }
 
-func GetDomainCandlesFromHistoricalCandles(symbol string, histCandles []coinbase.CoinbaseHistoricalCandle) []Candle {
+func GetDomainCandlesFromHistoricalCandles(symbol string, histCandles []cb_models.CoinbaseHistoricalCandle) []Candle {
 	candles := make([]Candle, 0)
 	for _, c := range histCandles {
 		candles = append(candles, Candle{

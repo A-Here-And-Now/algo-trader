@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/channel_helper"
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/coinbase"
+	cb_models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models/coinbase"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	"github.com/gorilla/websocket"
 )
@@ -18,13 +18,13 @@ type UserChannelMessage struct {
 	Channel string `json:"channel"`
 	Events  []struct {
 		Type   string           `json:"type"`
-		Orders []coinbase.Order `json:"orders"`
+		Orders []cb_models.Order `json:"orders"`
 	} `json:"events"`
 }
 
 // dialWebSocket connects with the JWT included in the HTTP headers for the WebSocket handshake.
 func dialWebSocketWithAuth(ctx context.Context, wsURL string, apiKey string, apiSecret string) (*websocket.Conn, *http.Response, error) {
-	jwtTok, err := coinbase.BuildJWT(apiKey, apiSecret)
+	jwtTok, err := buildJWT(apiKey, apiSecret)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build jwt: %w", err)
 	}
@@ -239,7 +239,7 @@ func (e *CoinbaseExchange) subscribeToMarketDataForAllTokens(conn *websocket.Con
 	}
 
 	// Subscription json to the two channels we need, for all products in the "tokens" array
-	subPayload := coinbase.GetMarketSubscriptionPayload(symbols, false)
+	subPayload := cb_models.GetMarketSubscriptionPayload(symbols, false)
 	for _, p := range subPayload {
 		if err := conn.WriteJSON(p); err != nil {
 			log.Printf("Failed to send subscription: %v", err)
@@ -344,7 +344,7 @@ func (e *CoinbaseExchange) getUserDataSubscriptionPayload(tokens []string, isUns
 		subType = "unsubscribe"
 	}
 	// Subscribe once to unified "user" channel for all products, include jwt in payload
-	jwt, err := coinbase.BuildJWT(e.apiKey, e.apiSecret)
+	jwt, err := buildJWT(e.apiKey, e.apiSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -375,10 +375,26 @@ func (e *CoinbaseExchange) readUserLoop(conn *websocket.Conn) {
 		}
 		for _, ev := range msg.Events {
 			for _, o := range ev.Orders {
-				update := GetOrderUpdate(o)
+				update := getOrderUpdate(o)
 				e.publishOrderUpdate(update)
 			}
 		}
+	}
+}
+
+func getOrderUpdate(o cb_models.Order) models.OrderUpdate {
+	return models.OrderUpdate{
+		Channel:       "user",
+		ProductID:     o.ProductID,
+		OrderID:       o.OrderID,
+		Status:        o.Status,
+		FilledQty:     o.CumulativeQuantity,
+		FilledValue:   o.FilledValue,
+		CompletionPct: o.CompletionPct,
+		Leaves:        o.Leaves,
+		Price:         o.AvgPrice,
+		Side:          o.OrderSide,
+		Ts:            models.GetTimeFromUnixTimestamp(o.CreationTime),
 	}
 }
 

@@ -118,7 +118,7 @@ However, while I was working on this, I learned that I can also implement the fo
 2. **Universal candle filters**: All strategies should be able to use Heikin-Ashi or Renko candles without exception, because this is not necessarily a "strategy" as much as a noise reduction filter
 
 3. **Risk management controls**: All strategies should have configurable take profit, stop loss, trailing stop
-   - This one is already 90% true as I implemented it recently
+   - This one is already 50% true as I implemented these items in the strategies recently, though the percentages for each is currently hardcoded rather than configurable
 
 4. **Deribit integration**: We should use Deribit instead of Coinbase
    - Because the Coinbase Advanced Trade API does not offer options, these trading strategies are stifled

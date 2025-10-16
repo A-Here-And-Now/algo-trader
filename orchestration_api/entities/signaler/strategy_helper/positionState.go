@@ -1,9 +1,7 @@
 package strategy_helper
 
 import (
-	"strconv"
-
-	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
+	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 )
 
@@ -60,10 +58,9 @@ func (h *PositionHolder) ConfirmSignalDelivered(symbol string, signal models.Sig
 
 func (h *PositionHolder) UpdateTrailingStop(symbol string, ticker models.Ticker) {
 	if s, ok := h.State[symbol]; ok && s.InPosition && s.TrailingStop != 0 {
-		currentPrice, _ := strconv.ParseFloat(ticker.Price, 64)
-		if currentPrice > s.LastTrailingStopPrice {
-			s.TrailingStop += currentPrice - s.LastTrailingStopPrice
-			s.LastTrailingStopPrice = currentPrice
+		if ticker.Price > s.LastTrailingStopPrice {
+			s.TrailingStop += ticker.Price - s.LastTrailingStopPrice
+			s.LastTrailingStopPrice = ticker.Price
 		}
 	}
 }

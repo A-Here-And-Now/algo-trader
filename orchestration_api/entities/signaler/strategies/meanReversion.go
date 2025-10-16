@@ -8,6 +8,7 @@ import (
 	enum "github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	models "github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 	talib "github.com/markcheno/go-talib"
+	exchange "github.com/A-Here-And-Now/algo-trader/orchestration_api/exchange"
 )
 
 type MeanReversionStrategy struct {
@@ -16,8 +17,8 @@ type MeanReversionStrategy struct {
 	SlATRMultiplier        float64
 }
 
-func (s *MeanReversionStrategy) CalculateSignal(symbol string, priceStore helper.IPriceActionStore) models.Signal {
-	const (
+func (s *MeanReversionStrategy) CalculateSignal(symbol string, exchange exchange.IExchange) models.Signal {
+	const (	
 		rsiLength = 14
 		// rsiOverbought := float64(80)
 		rsiOversold    = float64(20)
@@ -25,7 +26,7 @@ func (s *MeanReversionStrategy) CalculateSignal(symbol string, priceStore helper
 		emaLengthLower = 20
 		emaLengthUpper = 100
 	)
-	fullHistory := priceStore.GetFullMergedCandleHistory(symbol)
+	fullHistory := exchange.GetCandleHistory(symbol)
 	closes := fullHistory.GetCloses()
 	highs := fullHistory.GetHighs()
 	lows := fullHistory.GetLows()
