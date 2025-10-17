@@ -3,6 +3,7 @@ package helper
 import (
 	"sync"
 	"time"
+	"math"
 
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/enum"
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
@@ -17,6 +18,9 @@ type IPriceActionStore interface {
 	GetPriceHistory(symbol string) []models.Ticker
 	GetCandleHistory(symbol string) models.CandleHistory
 	GetLongCandleHistory(symbol string) models.CandleHistory
+	GetRenkoCandleHistory(symbol string) models.RenkoCandleHistory
+	IsRenkoCandleHistoryBuilt(symbol string) bool
+	BuildRenkoCandleHistory(symbol string, brickSize float64)
 }
 
 type PriceActionStore struct {
@@ -31,6 +35,8 @@ type PriceActionStore struct {
 	storedCandleVolume        map[string]float64
 	volumeOfLastInboundCandle map[string]float64
 	inboundCandleSize         enum.CandleSize
+	renkoCandleHistory        map[string]models.RenkoCandleHistory
+	isRenkoCandleHistoryBuilt map[string]bool
 }
 
 func NewStore(inboundCandleSize enum.CandleSize) *PriceActionStore {
@@ -44,9 +50,26 @@ func NewStore(inboundCandleSize enum.CandleSize) *PriceActionStore {
 		lastFiveMinuteCandleStart: make(map[string]time.Time),
 		storedCandleVolume:        make(map[string]float64),
 		volumeOfLastInboundCandle: make(map[string]float64),
+		renkoCandleHistory:        make(map[string]models.RenkoCandleHistory),
+		isRenkoCandleHistoryBuilt: make(map[string]bool),
 	}
 
 	return &store
+}
+
+func (s *PriceActionStore) GetRenkoCandleHistory(symbol string) models.RenkoCandleHistory {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.IsRenkoCandleHistoryBuilt(symbol) {
+		return models.RenkoCandleHistory{RenkoCandles: []models.RenkoCandle{}}
+	}
+	return s.renkoCandleHistory[symbol]
+}
+
+func (s *PriceActionStore) IsRenkoCandleHistoryBuilt(symbol string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.isRenkoCandleHistoryBuilt[symbol]
 }
 
 func (s *PriceActionStore) UpdateInboundCandleSize(candleSize enum.CandleSize) {
@@ -120,6 +143,17 @@ func (s *PriceActionStore) ingestPrice(symbol string, price float64, time time.T
 	if length > 1200 {
 		s.priceHistory[symbol] = s.priceHistory[symbol][length-1200:]
 	}
+
+	if (s.IsRenkoCandleHistoryBuilt(symbol)){
+		renkoCandleHistory := s.renkoCandleHistory[symbol]
+        brickSize := renkoCandleHistory.BrickSize
+        lastClose := renkoCandleHistory.LastCandlePrice
+        if (math.Abs(float64(price-lastClose)) >= brickSize){
+            newRenkoCandles, newLastClose := getNewRenkoCandles(price, lastClose, brickSize)
+            renkoCandleHistory.RenkoCandles = append(renkoCandleHistory.RenkoCandles, newRenkoCandles...)
+            renkoCandleHistory.LastCandlePrice = newLastClose
+        }
+    }
 }
 
 func (s *PriceActionStore) GetPriceHistory(symbol string) []models.Ticker {
@@ -199,4 +233,57 @@ func (s *PriceActionStore) getCurrentCandleVolume(symbol string, candle models.C
 
 		return s.storedCandleVolume[symbol] + candle.Volume
 	}
+}
+
+
+func (p *PriceActionStore) BuildRenkoCandleHistory(symbol string, brickSize float64) {
+	priceHistory := p.GetPriceHistory(symbol)
+	if len(priceHistory) == 0 {
+		p.renkoCandleHistory[symbol] = models.RenkoCandleHistory{
+			RenkoCandles: make([]models.RenkoCandle, 0),
+			LastCandlePrice: 0,
+			BrickSize: brickSize,
+		}
+		return
+	}
+
+	var renkoCandles []models.RenkoCandle
+	lastClose := priceHistory[0].Price
+
+	for _, p := range priceHistory {
+		price := p.Price
+		if (math.Abs(price-lastClose) >= brickSize){
+			newRenkoCandles, newLastClose := getNewRenkoCandles(price, lastClose, brickSize)
+			renkoCandles = append(renkoCandles, newRenkoCandles...)
+			lastClose = newLastClose
+		}
+	}
+
+	p.renkoCandleHistory[symbol] = models.RenkoCandleHistory{
+		RenkoCandles: renkoCandles,
+		LastCandlePrice: lastClose,
+		BrickSize: brickSize,
+	}
+	p.isRenkoCandleHistoryBuilt[symbol] = true
+}
+
+func getNewRenkoCandles(price float64, lastClose float64, brickSize float64) ([]models.RenkoCandle, float64) {
+	renkoCandles := make([]models.RenkoCandle, 0)
+	for math.Abs(float64(price-lastClose)) >= brickSize {
+		up := price > lastClose
+		var newClose float64
+		if up {
+			newClose = lastClose + brickSize
+		} else {
+			newClose = lastClose - brickSize
+		}
+
+		renkoCandles = append(renkoCandles, models.RenkoCandle{
+			Open:  price,
+			Close: newClose,
+		})
+
+		lastClose = newClose
+	}
+	return renkoCandles, lastClose
 }

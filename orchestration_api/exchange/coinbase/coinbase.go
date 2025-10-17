@@ -274,6 +274,22 @@ func (e *CoinbaseExchange) UpdateCandleSizeForSymbol(symbol string, candleSize e
 	return nil
 }
 
+func (e *CoinbaseExchange) GetRenkoCandleHistory(symbol string) models.RenkoCandleHistory {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.priceActionStore.GetRenkoCandleHistory(symbol)
+}
+
+func (e *CoinbaseExchange) IsRenkoCandleHistoryBuilt(symbol string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.priceActionStore.IsRenkoCandleHistoryBuilt(symbol)
+}
+
+func (e *CoinbaseExchange) BuildRenkoCandleHistory(symbol string, brickSize float64) {
+	e.priceActionStore.BuildRenkoCandleHistory(symbol, brickSize)
+}
+
 func (e *CoinbaseExchange) StartOrderAndPositionValuationWebSocket(ctx context.Context, wsURL string) {
 	go e.runUserWebSocket(ctx, wsURL)
 }

@@ -26,12 +26,12 @@ func (s *RenkoCandlesticksStrategy) CalculateSignal(symbol string, exchange exch
     i := len(regCloses) - 1
     atr := talib.Atr(hist.GetHighs(), hist.GetLows(), regCloses, atrLen)
 	brickSize := s.BrickSizeConstant * atr[i]
-	if !exchange.IsRenkoCandleHistoryBuilt() {
-		exchange.BuildRenkoCandleHistory(brickSize)
+	if !exchange.IsRenkoCandleHistoryBuilt(symbol) {
+		exchange.BuildRenkoCandleHistory(symbol, brickSize)
 	}
 	renkoCandles := exchange.GetRenkoCandleHistory(symbol)
 	
-	if !exchange.IsRenkoCandleHistoryBuilt() || renkoCandles == nil || len(renkoCandles.RenkoCandles) < 2 {
+	if !exchange.IsRenkoCandleHistoryBuilt(symbol) || len(renkoCandles.RenkoCandles) < 2 {
 		return models.Signal{
 			Symbol: symbol,
 			Type:   enum.SignalHold,
