@@ -12,6 +12,8 @@ import (
 	"github.com/A-Here-And-Now/algo-trader/orchestration_api/models"
 )
 
+
+
 type Trader struct {
 	cfg      TradeCfg
 	ctx      context.Context
@@ -20,11 +22,13 @@ type Trader struct {
 	signalCh chan models.Signal
 	state    models.TraderState
 	exchange exchange.IExchange
+	profitLossTotalChannel chan models.TokenProfitLossUpdate
+	timeOfLastProfitLossReport time.Time
 }
 
 // NewTrader builds a trader instance from a config.
-func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, updates chan TradeCfg, signalCh chan models.Signal, startingTokenBalance float64, exchange exchange.IExchange) *Trader {
-	return &Trader{cfg: cfg, ctx: ctx, cancel: cancel, updates: updates, signalCh: signalCh, state: models.TraderState{ActualPositionToken: startingTokenBalance}, exchange: exchange}
+func NewTrader(cfg TradeCfg, ctx context.Context, cancel context.CancelFunc, updates chan TradeCfg, signalCh chan models.Signal, profitLossTotalChannel chan models.TokenProfitLossUpdate, startingTokenBalance float64, exchange exchange.IExchange) *Trader {
+	return &Trader{cfg: cfg, ctx: ctx, cancel: cancel, updates: updates, signalCh: signalCh, state: models.TraderState{ActualPositionToken: startingTokenBalance}, exchange: exchange, profitLossTotalChannel: profitLossTotalChannel}
 }
 
 func (t *Trader) Run() {
@@ -82,6 +86,12 @@ func (t *Trader) Run() {
 	}
 }
 
+func (t *Trader) reportProfitLossTotal() {
+	profitLoss := t.state.ActualPositionUSD - t.cfg.AllocatedFunds
+	t.profitLossTotalChannel <- models.TokenProfitLossUpdate{Symbol: t.cfg.Symbol, ProfitLoss: profitLoss}
+	log.Printf("[Trader %s] Reported profit loss total: %v", t.cfg.Symbol, profitLoss)
+}
+
 func (t *Trader) getTargetPositionPct() float64 {
 	return t.state.TargetPositionUSD / t.cfg.AllocatedFunds
 }
@@ -95,6 +105,37 @@ func (t *Trader) handlePriceUpdate(ticker models.Ticker) {
 	t.state.ActualPositionUSD = t.state.ActualPositionToken * t.state.CurrentPriceUSDPerToken
 	if t.state.UsdAmountPerFulfilledOrders == 0 { // with this, the current logic can know about the pre-existing position and adjust accordingly
 		t.state.UsdAmountPerFulfilledOrders = t.state.ActualPositionUSD
+	}
+	if time.Since(t.timeOfLastProfitLossReport) > 20 * time.Second {
+		t.reportProfitLossTotal()
+		t.timeOfLastProfitLossReport = time.Now()
+	}
+}
+
+func (t *Trader) handleOrderUpdate(up models.OrderUpdate) {
+	if t.state.PendingOrder != nil {
+		if t.state.PendingOrder.OrderID == up.OrderID && up.Status == "FILLED" {
+			leaves, _ := strconv.ParseFloat(up.Leaves, 64)
+			if leaves != t.state.PendingOrder.CurrentAmountLeftToBeFilledInUSD {
+				cumulativeQuantity, _ := strconv.ParseFloat(up.FilledQty, 64)
+				filledUSD := t.state.PendingOrder.OriginalAmountInUSD - leaves
+				filledTokens := cumulativeQuantity - t.state.PendingOrder.AlreadyFilledInTokens
+				alreadyFilledUSD := t.state.PendingOrder.AlreadyFilledInUSD
+				alreadyFilledTokens := t.state.PendingOrder.AlreadyFilledInTokens
+
+				t.updatePendingOrderBalances(leaves, filledUSD, filledTokens)
+
+				// now we update the actual position (the one w/o gains or losses) minus the amount that we already delta'd our actual position from previous order updates
+				if up.Side == "BUY" {
+					t.state.UsdAmountPerFulfilledOrders += filledUSD - alreadyFilledUSD
+					t.state.ActualPositionToken += filledTokens - alreadyFilledTokens
+				} else {
+					t.state.UsdAmountPerFulfilledOrders -= filledUSD - alreadyFilledUSD
+					t.state.ActualPositionToken -= filledTokens - alreadyFilledTokens
+				}
+				t.reportProfitLossTotal()
+			}
+		}
 	}
 }
 
@@ -147,32 +188,6 @@ func (t *Trader) handleSignal(s models.Signal) {
 		t.state.TargetPositionUSD -= pct * t.cfg.AllocatedFunds / 100.0
 	default:
 		// hold not emitted
-	}
-}
-
-func (t *Trader) handleOrderUpdate(up models.OrderUpdate) {
-	if t.state.PendingOrder != nil {
-		if t.state.PendingOrder.OrderID == up.OrderID && up.Status == "FILLED" {
-			leaves, _ := strconv.ParseFloat(up.Leaves, 64)
-			if leaves != t.state.PendingOrder.CurrentAmountLeftToBeFilledInUSD {
-				cumulativeQuantity, _ := strconv.ParseFloat(up.FilledQty, 64)
-				filledUSD := t.state.PendingOrder.OriginalAmountInUSD - leaves
-				filledTokens := cumulativeQuantity - t.state.PendingOrder.AlreadyFilledInTokens
-				alreadyFilledUSD := t.state.PendingOrder.AlreadyFilledInUSD
-				alreadyFilledTokens := t.state.PendingOrder.AlreadyFilledInTokens
-
-				t.updatePendingOrderBalances(leaves, filledUSD, filledTokens)
-
-				// now we update the actual position (the one w/o gains or losses) minus the amount that we already delta'd our actual position from previous order updates
-				if up.Side == "BUY" {
-					t.state.UsdAmountPerFulfilledOrders += filledUSD - alreadyFilledUSD
-					t.state.ActualPositionToken += filledTokens - alreadyFilledTokens
-				} else {
-					t.state.UsdAmountPerFulfilledOrders -= filledUSD - alreadyFilledUSD
-					t.state.ActualPositionToken -= filledTokens - alreadyFilledTokens
-				}
-			}
-		}
 	}
 }
 

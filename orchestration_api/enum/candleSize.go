@@ -40,7 +40,7 @@ func (c CandleSize) String() string {
 	case CandleSize1d:
 		return "CandleSize1d"
 	default:
-		panic(fmt.Sprintf("Unknown CandleSize (%s)", c))
+		panic(fmt.Sprintf("Unknown CandleSize (%d)", c))
 	}
 }
 
@@ -90,7 +90,7 @@ func GetCoinbaseGranularityFromCandleSize(candleSize CandleSize) string {
 	case CandleSize1d:
 		return "ONE_DAY"
 	default:
-		panic(fmt.Sprintf("Unknown CandleSize (%s)", candleSize))
+		panic(fmt.Sprintf("Unknown CandleSize (%d)", candleSize))
 	}
 }
 
@@ -136,6 +136,6 @@ func GetLongCandleSizeFromCandleSize(candleSize CandleSize) CandleSize {
 	case CandleSize4h:
 		return CandleSize1d
 	default:
-		panic(fmt.Sprintf("Cannot get long candle size from %s", candleSize))
+		panic(fmt.Sprintf("Cannot get long candle size from %d", candleSize))
 	}
 }

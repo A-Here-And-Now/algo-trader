@@ -23,13 +23,6 @@ type CoinbaseClient struct {
 	apiSecret string
 }
 
-// ===== Typed models based on Coinbase docs =====
-
-type Money struct {
-	Value    string `json:"value"`
-	Currency string `json:"currency"`
-}
-
 func (c *CoinbaseClient) GetHistoricalCandles(ctx context.Context, productID string, candleSize enum.CandleSize) (cb_models.CandlesResponse, error) {
 	url := fmt.Sprintf("%s/api/v3/brokerage/market/products/%s/candles", c.baseURL, productID)
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
@@ -154,7 +147,7 @@ func (c *CoinbaseClient) createOrder(ctx context.Context, body cb_models.CreateO
 	url := fmt.Sprintf("%s/api/v3/brokerage/orders", c.baseURL)
 	req, _ := http.NewRequest(http.MethodPost, url, cb_models.BytesReader(jsonBody))
 	var out cb_models.CreateOrderResponse
-	return out, c.sendWithJwt(context.Background(), req, &out)
+	return out, c.sendWithJwt(ctx, req, &out)
 }
 
 func parseFloatSafe(s string) float64 {

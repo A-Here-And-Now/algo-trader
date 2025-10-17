@@ -22,9 +22,7 @@ var (
 	apiSecret = os.Getenv("COINBASE_API_SECRET")
 )
 var tokens = []string{"ETH-USD", "WBTC-USD", "LINK-USD", "UNI-USD", "AAVE-USD", "DOT-USD", "ENA-USD", "MNT-USD", "OKB-USD", "POL-USD"}
-var tokenToggles = make(map[string]bool)
 
-var availableFunds = 50000.0
 var mgr *manager.Manager
 
 type ctxKey struct{}
@@ -34,6 +32,7 @@ var loggerKey = ctxKey{}
 // ---------- HANDLERS ----------
 func ToggleTokenHandler(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
+	tokenToggles := mgr.GetTokenToggles()
 	if _, ok := tokenToggles[token]; !ok {
 		http.Error(w, "token not found", http.StatusNotFound)
 		return
@@ -41,10 +40,11 @@ func ToggleTokenHandler(w http.ResponseWriter, r *http.Request) {
 
 	log := LoggerFrom(r)
 	log.Printf("Toggling token: %s: %t", token, tokenToggles[token])
-	tokenToggles[token] = !tokenToggles[token]
+	mgr.ToggleToken(token)
 
+	newTokenToggles := mgr.GetTokenToggles()
 	var status string
-	if tokenToggles[token] {
+	if newTokenToggles[token] {
 		if err := mgr.Start(token); err != nil {
 			http.Error(w, "cannot start: "+err.Error(), http.StatusConflict)
 			return
@@ -76,9 +76,17 @@ func UpdateTradingStrategyHandler(w http.ResponseWriter, r *http.Request) {
 	mgr.UpdateStrategy(token, strategy)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status": "updated",
-	})
+}
+
+func UpdateCandleSizeHandler(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	candleSize := r.URL.Query().Get("candleSize")
+	candleSizeEnum := enum.GetCandleSizeFromString(candleSize)
+	log := LoggerFrom(r)
+	log.Printf("Updating candle size from %s to %s for token %s", mgr.GetCandleSize(token).String(), candleSizeEnum.String(), token)
+	mgr.UpdateCandleSize(token, candleSizeEnum)
+	
+	w.Header().Set("Content-Type", "application/json")
 }
 
 func UpdateMaxPLHandler(w http.ResponseWriter, r *http.Request) {
@@ -93,16 +101,28 @@ func UpdateMaxPLHandler(w http.ResponseWriter, r *http.Request) {
 	mgr.UpdateMaxPL(maxPLInt)
 }
 
-func UpdateStrategyHandler(w http.ResponseWriter, r *http.Request) {
-	mgr.UpdateStrategy(enum.GetStrategy(r.URL.Query().Get("strategy")))
-}
-
 func PriceHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(mgr.GetAllPriceHistory())
 }
 
 func CandleHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(mgr.GetAllCandleHistory())
+}
+
+func UpdateAllocatedFundsHandler(w http.ResponseWriter, r *http.Request) {
+	allocatedFunds := r.URL.Query().Get("allocatedFunds")
+	allocatedFundsFloat, err := strconv.ParseFloat(allocatedFunds, 64)
+	if err != nil {
+		http.Error(w, "invalid allocated funds", http.StatusBadRequest)
+		return
+	}
+	mgr.UpdateAllocatedFunds(allocatedFundsFloat)
+}
+
+func UpdateExchangeHandler(w http.ResponseWriter, r *http.Request) {
+	exchange := r.URL.Query().Get("exchange")
+	exchangeEnum := enum.GetExchangeFromString(exchange)
+	mgr.UpdateExchange(exchangeEnum)
 }
 
 // ---------- MAIN ----------
@@ -115,16 +135,11 @@ func main() {
 		l = &logger{log.New(os.Stdout, "", log.LstdFlags)}
 	}
 
-	// init token toggles
-	for _, token := range tokens {
-		tokenToggles[token] = false
-	}
-
 	// create shutdown context
 	shutdownCtx, shutdown := context.WithCancel(context.Background())
 
 	// propagate manager lifecycle context so we can skip reallocations during shutdown
-	mgr = manager.NewManager(availableFunds, 1000, enum.TrendFollowing, shutdownCtx, apiKey, apiSecret, tokens)
+	mgr = manager.NewManager(50000.0, 1000, enum.TrendFollowing, enum.CandleSize5m, shutdownCtx, apiKey, apiSecret, tokens)
 
 	// listen to OS signals
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -137,9 +152,11 @@ func main() {
 	// mux
 	mux := http.NewServeMux()
 	mux.HandleFunc("/toggleToken", ToggleTokenHandler)
-	mux.HandleFunc("/updateTradingPhilosophy", UpdateTradingStrategyHandler)
+	mux.HandleFunc("/updateTradingStrategy", UpdateTradingStrategyHandler)
 	mux.HandleFunc("/updateMaxPL", UpdateMaxPLHandler)
-	mux.HandleFunc("/updateStrategy", UpdateStrategyHandler)
+	mux.HandleFunc("/updateCandleSize", UpdateCandleSizeHandler)
+	mux.HandleFunc("/updateAllocatedFunds", UpdateAllocatedFundsHandler)
+	mux.HandleFunc("/updateExchange", UpdateExchangeHandler)
 	mux.HandleFunc("/ws", mgr.WebSocketHandler) // note: `mgr` is a *value* of type *Manager
 	mux.HandleFunc("/priceHistory", PriceHistoryHandler)
 	mux.HandleFunc("/candleHistory", CandleHistoryHandler)
@@ -163,8 +180,6 @@ func main() {
 	}()
 
 	mgr.RefreshTokenBalances()
-	mgr.StartCoinbaseFeed(shutdownCtx, "wss://advanced-trade-ws.coinbase.com")
-	mgr.StartOrderAndPositionValuationWebSocket(shutdownCtx, "wss://advanced-trade-ws-user.coinbase.com")
 
 	// wait for shutdown signal
 	<-shutdownCtx.Done()

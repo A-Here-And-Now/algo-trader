@@ -1,4 +1,4 @@
-package api_helper
+package models
 
 import (
 	"fmt"

@@ -40,7 +40,7 @@ type CoinbaseExchange struct {
 	priceActionStore *exchange_helper.PriceActionStore
 }
 
-func NewCoinbaseExchange(ctx context.Context, apiKey, apiSecret string, inboundCandleSize enum.CandleSize) *CoinbaseExchange {
+func NewCoinbaseExchange(ctx context.Context, apiKey, apiSecret string) *CoinbaseExchange {
 	return &CoinbaseExchange{
 		ctx:                 ctx,
 		apiKey:              apiKey,
@@ -50,7 +50,7 @@ func NewCoinbaseExchange(ctx context.Context, apiKey, apiSecret string, inboundC
 		tickerChannels:      make(map[string][]chan models.Ticker),
 		orderChannels:       make(map[string][]chan models.OrderUpdate),
 		client:              newCoinbaseClient("https://api.coinbase.com", apiKey, apiSecret),
-		priceActionStore:    exchange_helper.NewStore(inboundCandleSize),
+		priceActionStore:    exchange_helper.NewStore(enum.CandleSize5m),
 	}
 }
 

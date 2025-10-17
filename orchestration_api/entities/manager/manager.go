@@ -18,22 +18,24 @@ import (
 )
 
 type Manager struct {
-	mu                  sync.RWMutex
-	ctx                 context.Context
-	wg                  sync.WaitGroup
-	Cfg                 ManagerCfg
-	updates             chan ManagerCfg
-	profitLossTotal     float64
-	engine              *signaler.SignalEngine
-	traderResources     map[string]*trader.TraderResource
-	frontendConnected   bool
-	frontendMutex       sync.Mutex
-	tokenBalances       map[string]float64
-	apiKey              string
-	apiSecret           string
-	tokens              []string
-	exchange            exchange.IExchange
-	signalEngineUpdates chan signaler.SignalEngineConfigUpdate
+	mu                  	sync.RWMutex
+	ctx                 	context.Context
+	wg                  	sync.WaitGroup
+	Cfg                 	ManagerCfg
+	updates             	chan ManagerCfg
+	tokenProfitLossTotals 	map[string]float64
+	profitLossTotalChannel  chan models.TokenProfitLossUpdate
+	engine              	*signaler.SignalEngine
+	traderResources     	map[string]*trader.TraderResource
+	frontendConnected   	bool
+	frontendMutex       	sync.Mutex
+	tokenBalances       	map[string]float64
+	apiKey             		string
+	apiSecret           	string
+	tokens              	[]string
+	exchange            	exchange.IExchange
+	signalEngineUpdates 	chan signaler.SignalEngineConfigUpdate
+	tokenToggles       		*models.ToggleStore
 }
 
 type ManagerCfg struct {
@@ -48,28 +50,35 @@ func (m *Manager) GetStrategy(token string) enum.Strategy {
 	return m.Cfg.tokenStrategies[token]
 }
 
+func (m *Manager) GetCandleSize(token string) enum.CandleSize {
+	return m.Cfg.tokenCandleSizes[token]
+}
+
 func NewManager(funds float64, maxPL int64, startingStrategy enum.Strategy, startingCandleSize enum.CandleSize, ctx context.Context, apiKey string, apiSecret string, tokens []string) *Manager {
 	updates := make(chan ManagerCfg)
 	signalEngineUpdates := make(chan signaler.SignalEngineConfigUpdate, 10)
 
 	manager := Manager{
 		Cfg: ManagerCfg{
-			funds:            funds,
-			maxPL:            maxPL,
-			tokenStrategies:  make(map[string]enum.Strategy),
-			tokenCandleSizes: make(map[string]enum.CandleSize),
-			tokenEnabled:     make(map[string]bool),
+			funds:            	funds,
+			maxPL:            	maxPL,
+			tokenStrategies:  	make(map[string]enum.Strategy),
+			tokenCandleSizes: 	make(map[string]enum.CandleSize),
+			tokenEnabled:     	make(map[string]bool),
 		},
-		ctx:                 ctx,
-		updates:             updates,
-		traderResources:     make(map[string]*trader.TraderResource),
-		frontendConnected:   false,
-		frontendMutex:       sync.Mutex{},
-		apiKey:              apiKey,
-		apiSecret:           apiSecret,
-		tokens:              tokens,
-		exchange:            coinbase_exchange.NewCoinbaseExchange(ctx, apiKey, apiSecret, enum.CandleSize5m),
-		signalEngineUpdates: signalEngineUpdates,
+		ctx:                 	ctx,
+		profitLossTotalChannel: make(chan models.TokenProfitLossUpdate, 2),
+		tokenProfitLossTotals: 	make(map[string]float64),
+		updates:             	updates,
+		traderResources:     	make(map[string]*trader.TraderResource),
+		frontendConnected:   	false,
+		frontendMutex:       	sync.Mutex{},
+		apiKey:              	apiKey,
+		apiSecret:           	apiSecret,
+		tokens:              	tokens,
+		exchange:            	coinbase_exchange.NewCoinbaseExchange(ctx, apiKey, apiSecret),
+		signalEngineUpdates: 	signalEngineUpdates,
+		tokenToggles:       	models.NewToggleStore(tokens),
 	}
 
 	for _, token := range tokens {
@@ -84,16 +93,39 @@ func NewManager(funds float64, maxPL int64, startingStrategy enum.Strategy, star
 		for {
 			select {
 			case manager.Cfg = <-updates:
+				continue
 			case <-manager.ctx.Done():
+				manager.StopAll()
 				return
-			default:
-				manager.checkProfitLossTotalForToday()
-				time.Sleep(200 * time.Millisecond)
+			case profitLossUpdate, ok := <-manager.profitLossTotalChannel:
+				if !ok  || manager.ctx.Err() != nil {
+					manager.StopAll()
+					return
+				}
+				manager.handleProfitLossTotalUpdate(profitLossUpdate)
 			}
 		}
 	}()
 
 	return &manager
+}
+
+func (m *Manager) handleProfitLossTotalUpdate(profitLossUpdate models.TokenProfitLossUpdate) {
+	profitLossTotal := 0.0
+	tokenProfitLossTotal := 0.0
+	origValue, exists := m.tokenProfitLossTotals[profitLossUpdate.Symbol]
+	if exists {
+		tokenProfitLossTotal = origValue + profitLossUpdate.ProfitLoss
+	} else {
+		tokenProfitLossTotal = profitLossUpdate.ProfitLoss
+	}
+	m.tokenProfitLossTotals[profitLossUpdate.Symbol] = tokenProfitLossTotal
+	for _, value := range m.tokenProfitLossTotals {
+		profitLossTotal += value
+	}
+	if profitLossTotal > float64(m.Cfg.maxPL) {
+		m.StopAll()
+	}
 }
 
 func (m *Manager) safeAddTraderResource(symbol string, cfg trader.TradeCfg, done chan struct{}, cancel context.CancelFunc, updates chan trader.TradeCfg) {
@@ -172,7 +204,7 @@ func (m *Manager) Start(tokenStr string) error {
 	m.RefreshTokenBalances()
 
 	// Create new trader - trader will subscribe to exchange directly for data feeds
-	newTrader := trader.NewTrader(tradeCfg, ctx, cancel, updates, m.traderResources[tokenStr].SignalChan, m.tokenBalances[tokenStr], m.exchange)
+	newTrader := trader.NewTrader(tradeCfg, ctx, cancel, updates, m.traderResources[tokenStr].SignalChan, m.profitLossTotalChannel, m.tokenBalances[tokenStr], m.exchange)
 
 	go func() {
 		defer close(done)
@@ -194,6 +226,7 @@ func (m *Manager) Stop(token string) error {
 	m.traderResources[token].Stop()
 	m.safeRemoveTraderResource(token)
 	m.engine.UnregisterToken(token)
+	
 
 	m.wg.Add(1)
 	go func(tr *trader.TraderResource) {
@@ -227,9 +260,30 @@ func (m *Manager) UpdateMaxPL(maxPL int64) {
 	m.updates <- cfg
 }
 
+func (m *Manager) UpdateAllocatedFunds(allocatedFunds float64) {
+	m.Cfg.funds = allocatedFunds
+	log.Printf("Allocated funds updated to %v", allocatedFunds)
+	m.reallocateFunds()
+}
+
 func (m *Manager) UpdateStrategy(token string, strategy enum.Strategy) {
 	m.Cfg.tokenStrategies[token] = strategy
-	m.engine.UpdateStrategy(token, strategy)
+	if _, exists := m.traderResources[token]; exists {
+		newCfg := m.traderResources[token].Cfg	
+		newCfg.Strategy = strategy
+		m.traderResources[token].Updates <- newCfg
+		m.engine.UpdateStrategy(token, strategy)
+	}
+}
+
+func (m *Manager) UpdateCandleSize(token string, candleSize enum.CandleSize) {
+	m.Cfg.tokenCandleSizes[token] = candleSize
+	if _, exists := m.traderResources[token]; exists {
+		newCfg := m.traderResources[token].Cfg
+		newCfg.CandleSize = candleSize
+		m.traderResources[token].Updates <- newCfg
+		m.engine.UpdateCandleSize(token, candleSize)
+	}
 }
 
 func (m *Manager) GetAllPriceHistory() map[string][]models.Ticker {
@@ -251,12 +305,6 @@ func (m *Manager) GetAllCandleHistory() map[string][]models.Candle {
 	return allCandleHistory
 }
 
-func (m *Manager) checkProfitLossTotalForToday() {
-	if m.profitLossTotal > float64(m.Cfg.maxPL) {
-		m.StopAll()
-	}
-}
-
 func (m *Manager) reallocateFunds() {
 	numTraders := len(m.safeGetTraderResources())
 	if numTraders == 0 {
@@ -270,4 +318,35 @@ func (m *Manager) reallocateFunds() {
 			Strategy:       tr.Cfg.Strategy,
 		})
 	}
+}
+
+func (m *Manager) UpdateExchange(exchange enum.Exchange) error {
+	// TODO: verify a graceful shutdown of the exchange before swapping, 
+	// i.e. make sure all front end toggles are switched off before allowing, otherwise throw a 400 back
+	toggles := m.tokenToggles.Snapshot()
+	for _, toggle := range toggles {
+		if toggle {
+			return fmt.Errorf("cannot update exchange while tokens are still running")
+		}
+	}
+
+	switch exchange {
+	case enum.ExchangeCoinbase:
+		m.exchange = coinbase_exchange.NewCoinbaseExchange(m.ctx, m.apiKey, m.apiSecret)
+	case enum.ExchangeUniswap:
+		// m.exchange = uniswap_exchange.NewUniswapExchange(m.ctx, m.apiKey, m.apiSecret)
+	case enum.ExchangeDeribit:
+		// m.exchange = deribit_exchange.NewDeribitExchange(m.ctx, m.apiKey, m.apiSecret)
+	}
+	m.engine = signaler.NewSignalEngine(m.ctx, m.exchange, m.signalEngineUpdates)
+	log.Printf("Exchange updated to %s", exchange.String())
+	return nil
+}
+
+func (m *Manager) GetTokenToggles() map[string]bool {
+	return m.tokenToggles.Snapshot()
+}
+
+func (m *Manager) ToggleToken(token string) {
+	m.tokenToggles.Toggle(token)
 }
